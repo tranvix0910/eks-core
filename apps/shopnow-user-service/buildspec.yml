@@ -1,0 +1,77 @@
+version: 0.2
+
+env:
+  secrets-manager:
+    GITHUB_TOKEN: "workshop-2-shopnow-github-access-token:GITHUB_TOKEN"
+    SONAR_TOKEN: "workshop-2-shopnow-sonarqube-access-token:SONARQUBE_TOKEN"
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto17
+    commands:
+      - echo "Install phase started..."
+      - apt-get update && apt-get install -y git curl unzip maven
+      - echo "Installing sonar-scanner..."
+      - wget --tries=3 https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-7.1.0.4889-linux-x64.zip
+      - unzip sonar-scanner-cli-7.1.0.4889-linux-x64.zip
+      - mv sonar-scanner-7.1.0.4889-linux-x64 /opt/sonar-scanner
+      - export PATH=$PATH:/opt/sonar-scanner/bin
+      - echo "Install phase completed."
+
+  pre_build:
+    commands:
+      - echo "Pre-build phase started..."
+
+      # Get tag or commit hash as version
+      - |
+        GIT_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+        GIT_HASH=$(git rev-parse --short HEAD)
+        TAG_NAME="${GIT_TAG}_${GIT_HASH}"
+        export TAG_NAME
+        echo "Using image tag: $TAG_NAME"
+
+      # Check project structure
+      - test -f "pom.xml" || { echo "❌ Missing pom.xml"; exit 1; }
+      - test -f "Dockerfile" || { echo "❌ Missing Dockerfile"; exit 1; }
+
+      # Build project with Maven
+      - echo "Building project with Maven..."
+      - mvn clean package -DskipTests
+
+      # Analyze with SonarQube
+      - echo "Running SonarQube analysis..."
+      - sonar-scanner -Dsonar.projectKey="shopnow-java-service" -Dsonar.projectName="shopnow-java-service" -Dsonar.projectVersion="${TAG_NAME}" -Dsonar.sources=src/main/java -Dsonar.java.binaries=target -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN}
+
+      # Login to ECR
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_LOGIN_URI
+
+  build:
+    commands:
+      - echo "Build phase started..."
+      - docker build -t $ECR_REPOSITORY_URI:$TAG_NAME .
+
+      - docker run --rm -d --name user-service -p 5865:5865 $ECR_REPOSITORY_URI:$TAG_NAME
+      - sleep 10 && curl -f http://localhost:5865/actuator/health || echo "Health check failed"
+      - docker stop user-service || true
+      - docker rm user-service || true
+
+  post_build:
+    commands:
+      - echo "Post-build phase started..."
+      - docker push $ECR_REPOSITORY_URI:$TAG_NAME
+
+      # Update config repo Helm chart
+      - mkdir -p config-repo && cd config-repo
+      - git clone $CONFIG_REPO_URL . && git config user.email "tranvix.work@gmail.com"
+      - git config user.name "Tran Dai Vi - N22DCCI044"
+      - >
+        sed -i "s/^  tag.*/  tag: \"$TAG_NAME\"/" shopnow-user-service-chart/values.yaml
+      - git add shopnow-user-service-chart/values.yaml
+      - git commit -m "Update Java service image version to $TAG_NAME"
+      - git remote set-url origin https://$GITHUB_TOKEN@github.com/tranvix0910/shopnow-backend-config.git
+      - git push origin main
+      - cd ..
+
+      - echo "Build & Deploy completed for tag $TAG_NAME"

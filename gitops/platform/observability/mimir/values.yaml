@@ -1,0 +1,172 @@
+# Mimir for cluster eks-observability. Receives remote_write from cluster 1's
+# Prometheus, stores metrics long-term in S3.
+#
+#   aws eks update-kubeconfig --name eks-observability --region ap-southeast-1 --profile vitrandai-vib --alias eks-observability
+#   kubectl config use-context eks-observability
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm upgrade --install mimir grafana/mimir-distributed --version 6.1.0 \
+#     --namespace monitoring --create-namespace \
+#     --values gitops/platform/observability/mimir/values.yaml --wait
+#
+# Every value below was checked against the real chart with `helm template`,
+# and every fix past that point came from an actual pod crash log, not from
+# anticipating the problem - this chart's defaults assume a very different
+# deployment (Kafka-backed ingest storage, 3-AZ zone-aware replication, a
+# separate bucket per storage type) than a 2-node lab, and the failure modes
+# for each mismatch are specific enough that guessing would have wasted more
+# time than just reading what the crash actually said.
+#
+# This chart has no simpler "monolithic" mode - only a full microservices
+# topology (distributor, ingester, querier, compactor, store-gateway,
+# alertmanager, ruler, gateway...) each as its own Deployment/StatefulSet.
+# What makes this lab-sized is scaling every component to 1 replica via the
+# overrides below, not a different deployment mode.
+
+serviceAccount:
+  # Name fixed to "mimir" - must match the Pod Identity association in
+  # terraform/21-cluster-observability/s3.tf (module.mimir_pod_identity).
+  create: true
+  name: mimir
+
+# Bundled MinIO is enabled by default - this chart assumes you want a
+# ready-to-test object store unless told otherwise. Real S3 bucket already
+# exists (terraform output mimir_bucket_name), so MinIO would just be an
+# unused pod holding a PVC.
+minio:
+  enabled: false
+
+# "Ingest storage" (a Kafka-backed write path, newer Mimir architecture) is
+# hardcoded to enabled in this chart's base config text, not just a values.yaml
+# default - see mimir.structuredConfig.ingest_storage below, which is the only
+# way to turn it back off. Without both this and kafka.enabled: false, `helm
+# install` brings up a whole extra Kafka StatefulSet nobody asked for.
+kafka:
+  enabled: false
+
+mimir:
+  structuredConfig:
+    ingest_storage:
+      enabled: false
+
+    common:
+      storage:
+        backend: s3
+        s3:
+          region: ap-northeast-1
+          bucket_name: eks-observability-mimir-963626856932
+          # Required even for real AWS S3, not just S3-compatible/MinIO
+          # setups - every example in this chart's own values.yaml sets it,
+          # and leaving it out fails at startup with "no s3 endpoint in
+          # config file" rather than defaulting to the regional endpoint.
+          endpoint: s3.ap-northeast-1.amazonaws.com
+          # No access_key_id/secret_access_key - Pod Identity injects AWS
+          # credentials automatically, same mechanism as the EBS/EFS CSI
+          # drivers already used in this project. Static keys here would be
+          # the wrong pattern for an AWS-native deployment.
+
+    # common.storage above sets backend/bucket for blocks_storage,
+    # alertmanager_storage AND ruler_storage all at once - convenient, but it
+    # means all three write to the SAME bucket with the SAME (empty) prefix
+    # by default. Mimir refuses to start with "S3 bucket name and storage
+    # prefix cannot be the same as the one used in blocks storage config" -
+    # each needs its own prefix inside the shared bucket.
+    # No slash or punctuation - Mimir validates this as "digits and English
+    # alphabet letters" only, rejecting "alertmanager/" outright with
+    # "storage prefix contains invalid characters" (found on the actual next
+    # crash after storage_prefix was first added).
+    alertmanager_storage:
+      storage_prefix: alertmanager
+    ruler_storage:
+      storage_prefix: ruler
+
+    # A single ingester: key - YAML silently lets a later top-level key of
+    # the same name overwrite an earlier one rather than erroring, and that
+    # cost a rebuild here once already (push_grpc_method_enabled and ring
+    # used to be two separate `ingester:` blocks; the second deleted the
+    # first).
+    ingester:
+      # The base config text disables this unconditionally on the assumption
+      # ingest_storage (Kafka) is on - "Disallow Push gRPC API; everything
+      # comes through Kafka in the ingest storage architecture." With
+      # ingest_storage off, this is the only path distributor -> ingester
+      # writes can take at all; leaving it at the base default crash-loops
+      # every stateful component with "cannot disable Push gRPC method in
+      # ingester, while ingest storage is not enabled" - found this by
+      # reading the actual crash log, not by anticipating it.
+      push_grpc_method_enabled: true
+      ring:
+        # Compiled-in Mimir default is 3, which requires at least 2 live
+        # ingesters to accept a write. With 1 ingester pod (below), leaving
+        # this at 3 would make every remote_write fail with "at least 2 live
+        # replicas required, could only find 1".
+        replication_factor: 1
+
+    store_gateway:
+      sharding_ring:
+        replication_factor: 1
+
+# Both ingester and store-gateway default to zoneAwareReplication.enabled:
+# true, which splits them into 3 StatefulSets (one per AZ) even when replicas
+# is set to 1 - meaning 3 pods, not 1, until this is turned off explicitly.
+ingester:
+  replicas: 1
+  zoneAwareReplication:
+    enabled: false
+  nodeSelector:
+    role: monitoring
+
+store_gateway:
+  replicas: 1
+  zoneAwareReplication:
+    enabled: false
+  nodeSelector:
+    role: monitoring
+
+alertmanager:
+  replicas: 1
+  nodeSelector:
+    role: monitoring
+
+compactor:
+  replicas: 1
+  nodeSelector:
+    role: monitoring
+
+distributor:
+  replicas: 1
+  nodeSelector:
+    role: monitoring
+
+querier:
+  replicas: 1
+  nodeSelector:
+    role: monitoring
+
+query_frontend:
+  replicas: 1
+  nodeSelector:
+    role: monitoring
+
+query_scheduler:
+  replicas: 1
+  nodeSelector:
+    role: monitoring
+
+ruler:
+  replicas: 1
+  nodeSelector:
+    role: monitoring
+
+overrides_exporter:
+  replicas: 1
+  nodeSelector:
+    role: monitoring
+
+gateway:
+  replicas: 1
+  nodeSelector:
+    role: monitoring
+
+rollout_operator:
+  nodeSelector:
+    role: monitoring

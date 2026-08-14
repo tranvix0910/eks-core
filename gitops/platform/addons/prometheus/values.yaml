@@ -1,0 +1,192 @@
+# kube-prometheus-stack on cluster 1 (eks-workload).
+#
+# Chart 88.1.5 / operator v0.93.0
+#
+#   helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+#     --version 88.1.5 --namespace monitoring --create-namespace \
+#     --values gitops/platform/addons/prometheus/values.yaml --wait
+#
+# EVERY component needs a toleration for CriticalAddonsOnly. The managed node
+# group is the only untainted-for-us capacity in this cluster, and the four
+# Karpenter pools all carry their own taints. A component that forgets the
+# toleration sits Pending forever - that is exactly how the first install of
+# this chart failed.
+
+# Grafana belongs on cluster 2, the central observability cluster. Running it
+# here as well would mean two places to look and two sets of dashboards.
+grafana:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Operator
+# ---------------------------------------------------------------------------
+prometheusOperator:
+  nodeSelector:
+    role: infra
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+      effect: NoSchedule
+
+  # The admission webhook Jobs are the piece people forget. They run as Helm
+  # hooks before anything else, so if they cannot schedule the whole install
+  # times out and rolls back.
+  admissionWebhooks:
+    patch:
+      nodeSelector:
+        role: infra
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+          effect: NoSchedule
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# ---------------------------------------------------------------------------
+# Prometheus server
+# ---------------------------------------------------------------------------
+prometheus:
+  prometheusSpec:
+    nodeSelector:
+      role: infra
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+        effect: NoSchedule
+
+    # Lab retention. Long-term storage is cluster 2's job.
+    retention: 3d
+    retentionSize: 8GB
+
+    # Pick up ServiceMonitors and PodMonitors from every namespace, not only
+    # ones carrying the chart's release label. Without this, monitors created by
+    # application teams are silently ignored.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
+    # Turns this Prometheus into a shipper to cluster 2's Mimir. Everything
+    # else here stays the same as a normal scrape-only Prometheus.
+    #
+    # https, not the raw ALB hostname - internal-ingress.yaml now terminates
+    # TLS with a cert-manager-issued cert (SAN mimir.observability.internal /
+    # loki.observability.internal, chained to ClusterIssuer
+    # observability-ca-issuer), imported into ACM by hand since ALB only
+    # accepts certs living in ACM/IAM, then wired to the ALB via
+    # certificate-arn on both Ingress objects. DNS is the private hosted zone
+    # from terraform/21-cluster-observability/dns.tf (observability.internal,
+    # associated to the shared VPC), not the ALB's own auto-generated name -
+    # confirmed resolvable from this cluster with an in-cluster nslookup
+    # before this URL was changed, same "trust the real state over what a
+    # manifest claims" habit as the ALB DNS confirmation below it used to be.
+    remoteWrite:
+      - url: https://mimir.observability.internal:9009/api/v1/push
+        headers:
+          X-Scope-OrgID: eks-workload
+        tlsConfig:
+          # Secret is a manual copy of cert-manager's observability-alb-tls
+          # (namespace cert-manager) into this namespace - cert-manager only
+          # manages Secrets in the namespace a Certificate resource lives in,
+          # and that Certificate lives on this same cluster (cert-manager is
+          # only installed here, not on cluster 2) but in a different
+          # namespace. This copy does NOT auto-update when cert-manager
+          # renews the original before its 1-year expiry - re-copy manually
+          # (or automate) before then, or remote_write starts failing TLS
+          # verification against a stale ca.crt.
+          #
+          # caFile, not ca_file - this is the Prometheus Operator CRD
+          # (monitoring.coreos.com/v1 Prometheus.spec.remoteWrite[].tlsConfig),
+          # camelCase like every other field in the CRD, not the raw
+          # Prometheus YAML config's snake_case tls_config/ca_file. The first
+          # `helm upgrade` with the snake_case names failed server-side apply
+          # outright ("field not declared in schema") rather than silently
+          # doing nothing - confirmed the real field name with `kubectl
+          # explain prometheus.spec.remoteWrite.tlsConfig` before retrying.
+          caFile: /etc/prometheus/secrets/observability-alb-tls/ca.crt
+        queueConfig:
+          capacity: 10000
+          maxShards: 50
+
+    secrets:
+      - observability-alb-tls
+
+    externalLabels:
+      cluster: eks-workload
+
+# ---------------------------------------------------------------------------
+# Alertmanager
+# ---------------------------------------------------------------------------
+alertmanager:
+  alertmanagerSpec:
+    nodeSelector:
+      role: infra
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+        effect: NoSchedule
+
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+
+# ---------------------------------------------------------------------------
+# Exporters
+# ---------------------------------------------------------------------------
+kube-state-metrics:
+  nodeSelector:
+    role: infra
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+      effect: NoSchedule
+
+prometheus-node-exporter:
+  # node-exporter is a DaemonSet and has to run on EVERY node to report on it -
+  # including every Karpenter node, each with its own taint. So it tolerates
+  # everything rather than naming individual taints.
+  tolerations:
+    - operator: Exists
+
+# ---------------------------------------------------------------------------
+# Control plane scrape targets
+# ---------------------------------------------------------------------------
+# EKS runs the control plane on AWS-managed instances that are not reachable
+# from inside the cluster. Leaving these enabled produces permanently failing
+# scrape targets and misleading alerts about components that are in fact fine.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false

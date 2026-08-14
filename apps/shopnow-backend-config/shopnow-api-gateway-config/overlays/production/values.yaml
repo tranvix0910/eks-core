@@ -1,0 +1,13 @@
+# Production overlay.
+#
+# The baked-in application.properties in the api-gateway source points at
+# bare hostnames (`discovery-server`, `keycloak`) that don't exist as
+# Services here - same class of bug shopnow-cart-service-config hit with
+# Eureka before it. The real Service names carry the shopnow- prefix and the
+# component suffix (-service).
+configmap:
+  data:
+    application.properties: |
+      eureka.client.service-url.defaultZone=http://shopnow-discovery-server-service:8761/eureka/
+
+      spring.security.oauth2.resourceserver.jwt.issuer-uri=http://shopnow-keycloak-realms-service:8080/realms/java-microservice-realm

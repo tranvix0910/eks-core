@@ -1,0 +1,101 @@
+# Global settings
+global:
+  appName: "shopnow-discovery-server"
+  namespace: "shopnow"
+  enabledComponents:
+    configmap: true
+    service: true
+    # Kept on so the Eureka dashboard is reachable while bringing the stack up -
+    # it is the fastest way to see which services actually registered. It has no
+    # authentication, so it is behind the same inbound-cidrs allowlist as the
+    # admin tools. Turn this off once the stack is stable.
+    ingress: true
+
+# Deployment
+#
+# repository is intentionally empty: the Argo CD Application supplies it, so the
+# account id lives in exactly one place.
+image:
+  repository: ""
+  tag: "v1"
+  pullPolicy: Always
+
+# Stays at 1. A second Eureka replica is not a spare copy - peers have to be
+# told about each other through eureka.client.service-url.defaultZone, and two
+# standalone servers each hold half the registry, so clients get inconsistent
+# answers depending on which one they hit. Running a real peer-aware pair means
+# a StatefulSet with per-pod DNS, which is out of scope here.
+#
+# Consequence, on purpose: no PDB (skipped below 2 replicas) and a brief service
+# discovery gap during a rolling update or a node replacement. Clients keep their
+# cached registry through it.
+replicaCount: 1
+revisionHistoryLimit: 10
+rollingUpdate:
+  maxSurge: 25%
+  maxUnavailable: 25%
+
+nodeSelector:
+  workload: microservices
+tolerations:
+  - key: workload
+    operator: Equal
+    value: microservices
+    effect: NoSchedule
+
+terminationGracePeriodSeconds: 60
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 512Mi
+
+# Enabled but inert: the template also requires replicaCount > 1, and a
+# single-replica Deployment with a PDB can never be drained.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+persistence:
+  enabled: false
+  storageClass: efs-sc
+  size: 5Gi
+  mountPath: /data
+
+service:
+  type: ClusterIP
+  port: 8761
+  targetPort: 8761
+
+# Ingress joins the shared eks-workload ALB on its own listener port.
+#   http://<alb-dns>:8761
+ingress:
+  className: "alb"
+  host: ""
+  path: "/"
+  pathType: Prefix
+  groupName: "eks-workload"
+  groupOrder: 50
+  listenPorts: '[{"HTTP": 8761}]'
+  # 0.0.0.0/0 - lab tradeoff, see gitops/platform/ingress/admin-ingress.yaml.
+  # This was a stale single-IP allowlist that no longer matched anyone's IP,
+  # making the service unreachable to the one person running this lab.
+  inboundCidrs: "0.0.0.0/0"
+  # Eureka does serve its dashboard at /, so this one is a real 200.
+  healthcheckPath: "/"
+  successCodes: "200"
+
+configmap:
+  data: {}
+
+serviceAccount:
+  create: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80

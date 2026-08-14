@@ -1,0 +1,27 @@
+{{- if .Values.global.enabledComponents.service }}
+# Argo Rollouts points this at the preview ReplicaSet (the version not yet
+# promoted) and rewrites the selector with rollouts-pod-template-hash at
+# runtime - the selector below is just the base the controller patches.
+# Nothing external routes here by default; reach it with
+# `kubectl port-forward svc/{{ .Values.global.appName }}-preview-service -n {{ .Values.global.namespace }} 8080:{{ .Values.service.port }}`
+# to test the new version before promoting.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.global.appName }}-preview-service
+  namespace: {{ .Values.global.namespace }}
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: tcp
+      port: {{ .Values.service.port }}
+      protocol: TCP
+      targetPort: {{ .Values.service.targetPort }}
+  selector:
+    app: {{ .Values.global.appName }}
+  sessionAffinity: None
+  type: {{ .Values.service.type }}
+{{- end }}

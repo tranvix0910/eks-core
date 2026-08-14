@@ -1,0 +1,17 @@
+# Production overlay.
+#
+# The ingress block that used to live here is gone: the ACM certificate belonged
+# to account 022499043310 and the domain *.tranvix.click is not ours, and the
+# three hardcoded subnet ids were from a different VPC. The listener port now
+# lives in the chart's values.yaml, on the shared eks-workload ALB.
+configmap:
+  data:
+    application.properties: |
+      spring.application.name=discovery-server
+      server.port=8761
+
+      # A standalone Eureka server must not try to register with itself or fetch
+      # a registry from a peer - there is no peer. Leaving these on produces a
+      # steady stream of connection-refused warnings on startup.
+      eureka.client.register-with-eureka=false
+      eureka.client.fetch-registry=false

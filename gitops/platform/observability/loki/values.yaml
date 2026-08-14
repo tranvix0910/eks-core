@@ -1,0 +1,101 @@
+# Loki for cluster eks-observability. Receives pushed logs from cluster 1's
+# Grafana Alloy DaemonSet, stores them in S3.
+#
+#   kubectl config use-context eks-observability
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm upgrade --install loki grafana/loki --version 7.3.0 \
+#     --namespace monitoring --create-namespace \
+#     --values gitops/platform/observability/loki/values.yaml --wait
+#
+# Every value checked against the real chart with `helm template` before
+# being written here - see gitops/platform/observability/mimir/values.yaml
+# for why that mattered on a values file this size.
+
+deploymentMode: SingleBinary
+
+serviceAccount:
+  # Name fixed to "loki" - must match the Pod Identity association in
+  # terraform/21-cluster-observability/s3.tf (module.loki_pod_identity).
+  create: true
+  name: loki
+
+singleBinary:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+  # persistence.enabled defaults to true, 10Gi, no storageClass override -
+  # picks up the cluster's default StorageClass (gp3, same file as cluster 1:
+  # gitops/platform/observability/storage/storageclass-gp3.yaml). This volume
+  # holds the WAL and local index cache before data is flushed to S3, not the
+  # long-term store itself.
+
+# SingleBinary mode does not run separate read/write/backend components -
+# zero them out explicitly so a future chart upgrade defaulting differently
+# cannot silently bring up components this deployment mode does not use.
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+# Default chunks-cache allocates 8Gi RAM to a single memcached pod - sized for
+# real production query volume, not a lab. Disabled entirely rather than
+# resized down: at this log volume, querying S3 directly on a cache miss is
+# fast enough that the cache would rarely even get used.
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+loki:
+  auth_enabled: false
+
+  # Compiled-in default is 3, same class of bug already hit and fixed on
+  # Mimir's ingester ring (../mimir/values.yaml) - with singleBinary.replicas
+  # at 1 (below), every read AND write failed once real traffic arrived:
+  # queries with "too many unhealthy instances in the ring", pushes with "at
+  # least 2 live replicas required, could only find 1". The single binary
+  # started and looked healthy (2/2 Running) because this only bites once
+  # something actually tries to read or write - not something a plain
+  # readiness probe would ever catch.
+  commonConfig:
+    replication_factor: 1
+
+  storage:
+    type: s3
+    bucketNames:
+      chunks: eks-observability-loki-963626856932
+      ruler: eks-observability-loki-963626856932
+      admin: eks-observability-loki-963626856932
+    s3:
+      region: ap-northeast-1
+      # Required even for real AWS S3 - same lesson learned the hard way on
+      # Mimir (../mimir/values.yaml): every ingester/compactor/store-gateway
+      # crash-looped with "no s3 endpoint in config file" until this was set
+      # explicitly, despite region being present.
+      endpoint: s3.ap-northeast-1.amazonaws.com
+      # No accessKeyId/secretAccessKey - Pod Identity injects AWS credentials
+      # automatically, same as Mimir's S3 config and the EBS/EFS CSI drivers
+      # already used in this project.
+
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: s3
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+
+gateway:
+  nodeSelector:
+    role: monitoring
+
+nodeSelector:
+  role: monitoring

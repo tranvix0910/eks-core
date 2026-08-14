@@ -1,0 +1,43 @@
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  # Fixed name, no random suffix, because
+  # terraform/20-cluster-workload/main.tf sets
+  # node_iam_role_use_name_prefix = false on the karpenter module.
+  #
+  # This used to carry a generated name such as
+  # Karpenter-eks-workload-9e2c31a59e9bb3b69a9888a594, which changed on every
+  # rebuild and had to be pasted back in from terraform output. Leaving the old
+  # value made nodes fail to launch, and the error appeared at the EC2 layer
+  # rather than in Karpenter's logs.
+  role: Karpenter-eks-workload
+
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: eks-workload
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: eks-workload
+
+  amiSelectorTerms:
+    - alias: al2023@v20260801
+
+  metadataOptions:
+    httpEndpoint: enabled
+    httpTokens: required
+    httpPutResponseHopLimit: 1
+
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 30Gi
+        volumeType: gp3
+        encrypted: true
+        deleteOnTermination: true
+
+  tags:
+    Project: vi.trandai
+    Cluster: eks-workload
+    ManagedBy: karpenter

@@ -1,0 +1,59 @@
+{{- if and .Values.global.enabledComponents.ingress .Values.global.enabledComponents.service }}
+# Joins the shared ALB rather than creating its own.
+#
+# group.name puts every Ingress with the same value on ONE load balancer. The
+# admin tools (Argo CD, Prometheus, Alertmanager, JavaMelody) already use the
+# eks-workload group, so these services cost no extra ALB - one at ~$16/month
+# instead of one per service.
+#
+# Separated by listener port, not by host. The original chart routed on
+# <service>-shopnow.tranvix.click; that domain is not ours and no certificate can
+# be issued for it, so host rules would match nothing. The ALB's own DNS name is
+# the only hostname available, hence one port per service.
+#
+# No certificate-arn and no ssl-redirect: HTTP only, because a certificate cannot
+# be issued for an *.elb.amazonaws.com name. Acceptable behind the inbound-cidrs
+# allowlist below; not a pattern to carry into anything real.
+#
+# No subnets annotation either. The load balancer controller discovers subnets
+# from the kubernetes.io/role/elb tags layer 10 already sets, which is one less
+# hardcoded id to go stale.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.global.appName }}-ingress
+  namespace: {{ .Values.global.namespace }}
+  annotations:
+    alb.ingress.kubernetes.io/group.name: {{ .Values.ingress.groupName | quote }}
+    alb.ingress.kubernetes.io/group.order: {{ .Values.ingress.groupOrder | quote }}
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: {{ .Values.ingress.listenPorts | quote }}
+    # These services have no authentication of their own. This allowlist is the
+    # only thing between them and the internet. A home or office IP changes -
+    # when the ALB stops answering, check here first:  curl -s -4 ifconfig.me
+    alb.ingress.kubernetes.io/inbound-cidrs: {{ .Values.ingress.inboundCidrs | quote }}
+    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.ingress.healthcheckPath | quote }}
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    # A REST service has no controller mapped to /, so Spring answers 404 there.
+    # The ALB default only accepts 200, which would mark every target unhealthy
+    # and return 503 for a perfectly healthy pod. Widening the range is the
+    # workaround until actuator exists; then set this back to "200" and point
+    # healthcheck-path at /actuator/health.
+    alb.ingress.kubernetes.io/success-codes: {{ .Values.ingress.successCodes | quote }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    # host is omitted when empty. An empty string here would render `host: ""`,
+    # which the API server accepts and which then matches no request at all.
+    - {{ if .Values.ingress.host }}host: {{ .Values.ingress.host | quote }}
+      {{ end }}http:
+        paths:
+          - path: {{ .Values.ingress.path }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ .Values.global.appName }}-service
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

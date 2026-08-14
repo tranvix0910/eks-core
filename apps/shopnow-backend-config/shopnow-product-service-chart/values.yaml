@@ -1,0 +1,95 @@
+# Global settings
+global:
+  appName: "shopnow-product-service"
+  namespace: "shopnow"
+  enabledComponents:
+    configmap: true
+    service: true
+    ingress: true
+
+# Deployment
+#
+# repository is intentionally empty: the Argo CD Application supplies it, so the
+# account id lives in exactly one place. See shopnow-product-service-config/base.
+image:
+  repository: ""
+  tag: "v1"
+  pullPolicy: Always
+
+# 2, not 1. Below 2 the PodDisruptionBudget is skipped and a single spot
+# interruption takes the whole service down.
+replicaCount: 2
+revisionHistoryLimit: 10
+rollingUpdate:
+  maxSurge: 25%
+  maxUnavailable: 25%
+
+# Scheduling. Sends pods to node pool 2 (ms-od / ms-spot), which carries both
+# the label and the matching taint - see gitops/platform/nodepools.
+nodeSelector:
+  workload: microservices
+tolerations:
+  - key: workload
+    operator: Equal
+    value: microservices
+    effect: NoSchedule
+
+terminationGracePeriodSeconds: 60
+
+# Guaranteed QoS on memory: limit equals request, so the JVM cannot be evicted
+# for growing into its own heap. No CPU limit on purpose - throttling shows up as
+# unexplained latency rather than a clear failure.
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 512Mi
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# The one service with a ReadWriteMany volume, for product images and generated
+# assets. EFS is the only AWS option for RWX; see templates/pvc-efs.yaml.
+persistence:
+  enabled: true
+  storageClass: efs-sc
+  size: 5Gi
+  mountPath: /data
+
+service:
+  type: ClusterIP
+  port: 5861
+  targetPort: 5861
+
+# Ingress joins the shared eks-workload ALB on its own listener port.
+#   http://<alb-dns>:5861
+ingress:
+  className: "alb"
+  # Empty: routing is by listener port, not by host. There is no domain here.
+  host: ""
+  path: "/"
+  pathType: Prefix
+  groupName: "eks-workload"
+  groupOrder: 60
+  listenPorts: '[{"HTTP": 5861}]'
+  # 0.0.0.0/0 - lab tradeoff, see gitops/platform/ingress/admin-ingress.yaml.
+  # This was a stale single-IP allowlist that no longer matched anyone's IP,
+  # making the service unreachable to the one person running this lab.
+  inboundCidrs: "0.0.0.0/0"
+  healthcheckPath: "/"
+  successCodes: "200-404"
+
+configmap:
+  data: {}
+
+serviceAccount:
+  create: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80

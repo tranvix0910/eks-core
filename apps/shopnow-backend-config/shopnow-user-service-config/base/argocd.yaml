@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-user-service
+  namespace: argocd
+spec:
+  destination:
+    namespace: shopnow
+    server: https://kubernetes.default.svc
+  source:
+    # This repository, not shopnow-backend - the chart directory lives here.
+    repoURL: https://github.com/tranvix0910/shopnow-backend-config.git
+    targetRevision: main
+    path: shopnow-user-service-chart
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../shopnow-user-service-config/overlays/production/values.yaml
+      values: |
+        image:
+          # Account 963626856932, not 022499043310 - see
+          # terraform/20-cluster-workload/modules/ecr.
+          repository: "963626856932.dkr.ecr.ap-southeast-1.amazonaws.com/shopnow/shopnow-user-service"
+  project: shopnow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

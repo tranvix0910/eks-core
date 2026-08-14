@@ -1,0 +1,84 @@
+# Global settings
+global:
+  appName: "shopnow-shopping-cart-service"
+  namespace: "shopnow"
+  enabledComponents:
+    configmap: true
+    service: true
+    ingress: true
+
+image:
+  repository: ""
+  tag: "v1"
+  pullPolicy: Always
+
+replicaCount: 2
+revisionHistoryLimit: 10
+rollingUpdate:
+  maxSurge: 25%
+  maxUnavailable: 25%
+
+# Scheduling. Sends pods to node pool 2 (ms-od / ms-spot), which carries both
+# the label and the matching taint - see gitops/platform/nodepools.
+nodeSelector:
+  workload: microservices
+tolerations:
+  - key: workload
+    operator: Equal
+    value: microservices
+    effect: NoSchedule
+
+terminationGracePeriodSeconds: 60
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 512Mi
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# Cart state lives in Postgres, not on disk. Nothing to share between replicas.
+persistence:
+  enabled: false
+  storageClass: efs-sc
+  size: 5Gi
+  mountPath: /data
+
+service:
+  type: ClusterIP
+  port: 5863
+  targetPort: 5863
+
+# Ingress joins the shared eks-workload ALB on its own listener port.
+#   http://<alb-dns>:5863
+ingress:
+  className: "alb"
+  host: ""
+  path: "/"
+  pathType: Prefix
+  groupName: "eks-workload"
+  groupOrder: 70
+  listenPorts: '[{"HTTP": 5863}]'
+  # 0.0.0.0/0 - lab tradeoff, see gitops/platform/ingress/admin-ingress.yaml.
+  # This was a stale single-IP allowlist that no longer matched anyone's IP,
+  # making the service unreachable to the one person running this lab.
+  inboundCidrs: "0.0.0.0/0"
+  healthcheckPath: "/"
+  successCodes: "200-404"
+
+configmap:
+  data: {}
+
+serviceAccount:
+  create: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80

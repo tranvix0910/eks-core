@@ -1,0 +1,174 @@
+# JavaMelody collector server 2.8.0 - JVM heap and JDBC monitoring for the Java
+# microservices.
+#
+#   kubectl apply -f gitops/platform/addons/javamelody/javamelody-collector.yaml
+#   kubectl port-forward -n javamelody svc/javamelody-collector 8080:8080
+#   open http://localhost:8080/
+#
+# There is no official JavaMelody container image and no Helm chart. The images
+# on Docker Hub are community builds with almost no adoption, so instead this
+# uses the official Tomcat image and fetches the release WAR from GitHub at
+# startup. Nothing untrusted enters the cluster and the version is pinned.
+#
+# JavaMelody 2.x targets jakarta.servlet, so it needs Tomcat 10 or newer.
+# Version 1.x is the javax.servlet line and requires Tomcat 9.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: javamelody
+---
+# The collector writes RRD files - one per monitored application - and reads
+# them back to draw graphs. That is frequent small random IO with file locking,
+# so it needs a real block device.
+#
+# Do NOT point this at EFS. Several JVMs writing the same RRD files over NFS
+# corrupt them, and NFS is slow for this access pattern.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: javamelody-data
+  namespace: javamelody
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: javamelody-collector
+  namespace: javamelody
+spec:
+  serviceName: javamelody-collector
+  replicas: 1 # single writer - the RRD files cannot be shared
+  selector:
+    matchLabels:
+      app: javamelody-collector
+  template:
+    metadata:
+      labels:
+        app: javamelody-collector
+    spec:
+      # Infra component, so it lives on the managed node group like Karpenter
+      # and Argo CD.
+      nodeSelector:
+        role: infra
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+          effect: NoSchedule
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+
+      initContainers:
+        # Fetch the release WAR into the webapps directory. Pinned by version,
+        # straight from the project's GitHub release.
+        - name: fetch-war
+          image: curlimages/curl:8.11.1
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              curl -fsSL -o /webapps/ROOT.war \
+                https://github.com/javamelody/javamelody/releases/download/javamelody-core-2.8.0/javamelody-collector-server-2.8.0.war
+              ls -la /webapps/
+          volumeMounts:
+            - name: webapps
+              mountPath: /webapps
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+      containers:
+        - name: tomcat
+          image: tomcat:10.1-jre21-temurin
+          ports:
+            - name: http
+              containerPort: 8080
+
+          env:
+            # Where the collector stores its RRD files.
+            - name: CATALINA_OPTS
+              value: >-
+                -Djavamelody.storage-directory=/data
+                -Djavamelody.urls=
+
+            # NOTE on javamelody.urls: the collector needs a STATIC list of
+            # application URLs to poll. It has no service discovery, and pod IPs
+            # change constantly.
+            #
+            # Once the Java microservices exist, run them as a StatefulSet so
+            # they get stable DNS names, then set for example:
+            #
+            #   -Djavamelody.urls=http://svc-0.svc-headless.apps:8081/monitoring,\
+            #                     http://svc-1.svc-headless.apps:8081/monitoring
+            #
+            # Point at the management port, never the traffic port. The
+            # /monitoring endpoint exposes thread dumps, heap histograms, SQL
+            # statements with their parameters and system properties.
+
+            - name: JAVA_OPTS
+              value: "-Xms256m -Xmx512m"
+
+          volumeMounts:
+            - name: webapps
+              mountPath: /usr/local/tomcat/webapps
+            - name: data
+              mountPath: /data
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 768Mi
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: webapps
+          emptyDir: {}
+        - name: data
+          persistentVolumeClaim:
+            claimName: javamelody-data
+---
+# ClusterIP only. The collector UI shows thread dumps, SQL text and system
+# properties - it must never be reachable from outside the cluster. Use
+# port-forward, or an internal ingress behind SSO if a permanent URL is needed.
+apiVersion: v1
+kind: Service
+metadata:
+  name: javamelody-collector
+  namespace: javamelody
+spec:
+  type: ClusterIP
+  selector:
+    app: javamelody-collector
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

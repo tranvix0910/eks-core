@@ -1,0 +1,56 @@
+# AppProject for the ShopNow workloads.
+#
+#   kubectl apply -f gitops/platform/addons/argocd/appproject-shopnow.yaml
+#
+# Every ShopNow Application declares `project: shopnow`. Argo CD does not create
+# a missing project: the Application is accepted and then permanently reports
+# "Application referencing project shopnow which does not exist", with no sync
+# attempted. The cluster only had the built-in `default` project, so this is
+# required before any of them will run.
+#
+# It also does the job `default` cannot: `default` allows every source repo,
+# every destination namespace and every resource kind. This one is scoped, so a
+# bad path in a ShopNow Application cannot create a ClusterRole or write into
+# kube-system.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: shopnow
+  namespace: argocd
+spec:
+  description: ShopNow microservices and their databases
+
+  sourceRepos:
+    - https://github.com/tranvix0910/shopnow-backend-config.git
+    - https://github.com/tranvix0910/shopnow-frontend-config.git
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: shopnow
+
+  # Namespaced resources only, and only in the shopnow namespace above, with one
+  # deliberate exception: shopnow-database-config/namespace.yaml declares the
+  # `shopnow` Namespace itself so a fresh cluster can bootstrap it via sync
+  # rather than a manual kubectl apply. Without this entry Argo CD rejects that
+  # one object as "resource Namespace is not permitted in project shopnow" and
+  # the database Application never reaches Synced, even though every other
+  # resource in it is fine.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: "*"
+    - group: "apps"
+      kind: "*"
+    - group: "batch"
+      kind: "*"
+    - group: "networking.k8s.io"
+      kind: "*"
+    - group: "policy"
+      kind: "*"
+    - group: "autoscaling"
+      kind: "*"
+    - group: "argoproj.io"
+      kind: "*"

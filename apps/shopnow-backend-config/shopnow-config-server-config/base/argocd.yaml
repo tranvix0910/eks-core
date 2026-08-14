@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-config-server
+  namespace: argocd
+  annotations:
+    # Config server first: the other services read their configuration from it,
+    # and a service that starts before it is up retries with a backoff that adds
+    # minutes to a cold start.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  destination:
+    namespace: shopnow
+    server: https://kubernetes.default.svc
+  source:
+    # This repository, not shopnow-backend - the chart directory lives here.
+    repoURL: https://github.com/tranvix0910/shopnow-backend-config.git
+    targetRevision: main
+    path: shopnow-config-server-chart
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../shopnow-config-server-config/overlays/production/values.yaml
+      values: |
+        image:
+          # Account 963626856932, not 022499043310 - see
+          # terraform/20-cluster-workload/modules/ecr.
+          repository: "963626856932.dkr.ecr.ap-southeast-1.amazonaws.com/shopnow/shopnow-config-server"
+  project: shopnow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

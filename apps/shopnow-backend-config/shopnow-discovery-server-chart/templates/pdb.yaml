@@ -1,0 +1,20 @@
+{{- if and .Values.podDisruptionBudget.enabled (gt (int .Values.replicaCount) 1) }}
+# Guarded on replicaCount > 1 deliberately. A single-replica Deployment with a
+# PDB can never be drained: Karpenter consolidation stalls, node upgrades hang,
+# and the nodes sit around as zombies.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Values.global.appName }}-pdb
+  namespace: {{ .Values.global.namespace }}
+spec:
+  # maxUnavailable, not minAvailable. An absolute minAvailable becomes wrong the
+  # moment the HPA changes the replica count.
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      app: {{ .Values.global.appName }}
+{{- end }}
+# A PDB does not survive a spot interruption. After the 2-minute warning EC2
+# takes the node whatever the budget says - that is why the microservices pool
+# keeps an on-demand floor.

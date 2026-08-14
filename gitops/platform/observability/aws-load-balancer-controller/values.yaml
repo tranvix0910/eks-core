@@ -1,0 +1,51 @@
+# AWS Load Balancer Controller for cluster eks-observability.
+#
+#   aws eks update-kubeconfig --name eks-observability --region ap-southeast-1 --profile vitrandai-vib --alias eks-observability
+#   kubectl config use-context eks-observability
+#   helm repo add eks https://aws.github.io/eks-charts
+#   helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+#     --version 3.5.0 --namespace kube-system \
+#     --values gitops/platform/observability/aws-load-balancer-controller/values.yaml --wait
+#
+# vpcId IS required here, despite the reasoning that used to be in this
+# comment about leaving it out to avoid staleness. Tried that: the controller
+# crash-looped instead of falling back cleanly -
+#   "failed to fetch VPC ID from instance metadata: ... context deadline
+#   exceeded"
+# IMDS auto-detection needs the pod's network namespace to reach instance
+# metadata, and the extra network hop a pod sits behind (vs. a process
+# running directly on the host) means it needs the node's IMDSv2 hop limit to
+# allow more than 1 hop. Cluster 1's node group does not set that either, so
+# its copy of this file works only because vpcId has been explicit there the
+# whole time - staleness that never crashed is not evidence it was doing
+# nothing.
+#
+# terraform -chdir=terraform/10-network output vpc_id
+# This value goes stale if the VPC is ever destroyed and recreated - same as
+# cluster 1's copy. Check `aws ec2 describe-vpcs --filters
+# Name=cidr-block,Values=10.20.0.0/16` if the controller ever crash-loops on
+# this again after a network layer rebuild.
+clusterName: eks-observability
+region: ap-northeast-1
+vpcId: vpc-03af8e02142a62658
+
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+
+# Every node in this cluster carries no taint (see
+# terraform/21-cluster-observability/main.tf - node_groups.monitoring.taints
+# is {}), so no tolerations are needed here, unlike cluster 1's infra group.
+nodeSelector:
+  role: monitoring
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+defaultTargetType: ip

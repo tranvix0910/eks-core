@@ -1,0 +1,61 @@
+# Node pool 3: ARM64 Graviton.
+#
+# ⚠️ Two blockers before this pool is usable:
+#   1. No consumer assigned yet (see Linear TRA-15 question 4).
+#   2. Needs multi-arch images. Nothing runs here until CI builds linux/arm64
+#      and pushes a manifest list (Linear TRA-48).
+#
+# Worth reconsidering: Graviton is ~20% cheaper with better price-performance,
+# and ap-southeast-1 has 33 arm64 instance types across all 3 AZs with a spot
+# placement score of 9/10. If the microservice images can go multi-arch, it is
+# usually better to make node pool 2 itself ARM64 and keep an x86 pool as the
+# fallback, rather than running ARM64 as a separate empty pool.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: arm64
+spec:
+  weight: 50
+
+  template:
+    metadata:
+      labels:
+        arch: arm64
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      taints:
+        - key: arch
+          value: arm64
+          effect: NoSchedule
+
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["arm64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand", "spot"]
+        # Graviton families available in ap-southeast-1: m6g, m7g, m8g, c7g, r7g
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: ["m", "c", "r"]
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: ["5"]
+        - key: karpenter.k8s.aws/instance-size
+          operator: NotIn
+          values: ["nano", "micro", "small"]
+
+      expireAfter: 720h
+
+  limits:
+    cpu: 48
+
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m
+    budgets:
+      - nodes: "10%"

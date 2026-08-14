@@ -1,0 +1,41 @@
+# PersistentVolumeClaims for the stateful pieces.
+#
+# storageClassName is gp3, not ebs-sc. There is no ebs-sc StorageClass in this
+# cluster - a PVC naming it stays Pending forever with a single
+# "storageclass.storage.k8s.io \"ebs-sc\" not found" event and nothing else. gp3
+# is the cluster default and is created by
+# gitops/platform/addons/storage/storageclass-gp3.yaml: CSI provisioner,
+# encrypted, WaitForFirstConsumer.
+#
+# EBS rather than EFS on purpose. Both of these are databases doing small random
+# writes and frequent fsync, which is the workload EFS is worst at. The only EFS
+# volume in this project is product-service's shared asset directory.
+#
+# The keycloak-realms PVC that used to be here is gone: the realm JSON comes from
+# the keycloak-realm-config ConfigMap, so the 5Gi volume mounted at
+# /opt/keycloak/data/import held nothing.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc
+  namespace: shopnow
+spec:
+  storageClassName: gp3
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgresql-pvc
+  namespace: shopnow
+spec:
+  storageClassName: gp3
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

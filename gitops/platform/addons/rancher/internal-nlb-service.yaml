@@ -1,0 +1,45 @@
+# Internal NLB for Rancher agent registration from cluster 2 - a Service, not
+# an Ingress. Started as an ALB Ingress (see git history) and had to be
+# replaced: cattle-cluster-agent does not just fetch a manifest over HTTP, it
+# holds open a `wss://` (WebSocket-over-TLS) tunnel back to Rancher for as
+# long as the cluster stays imported, and that connection does a real TLS
+# handshake validated against a specific CA checksum baked into the
+# registration command (`--ca-checksum ...`) - the checksum of Rancher's own
+# self-signed cert. An ALB HTTPS listener would need its own ACM certificate
+# (no domain here to issue one for) and would terminate/re-encrypt with THAT
+# cert, not Rancher's, failing the checksum check. NLB forwards raw TCP - no
+# certificate anywhere on the load balancer, the agent's TLS handshake goes
+# straight through to Rancher's pod untouched.
+#
+#   kubectl apply -f gitops/platform/addons/rancher/internal-nlb-service.yaml
+#
+# security-groups: same security group Terraform created for this purpose
+# (terraform/20-cluster-workload/main.tf, aws_security_group.rancher_internal_alb
+# - the name is a leftover from the ALB attempt, still accurate as "the SG
+# that gates this internal LB", just not literally an ALB anymore) opened to
+# cluster 2's node security group on port 443 - see that file for the
+# from_port/to_port mixup that broke this once already (443 vs the listener
+# port, which for THIS Service is correctly 443 throughout, unlike the ALB
+# attempt's HTTP-80-front/HTTPS-443-back split).
+apiVersion: v1
+kind: Service
+metadata:
+  name: rancher-internal-nlb
+  namespace: cattle-system
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+    service.beta.kubernetes.io/aws-load-balancer-security-groups: eks-workload-rancher-internal-alb
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTPS"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/healthz"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "443"
+spec:
+  type: LoadBalancer
+  selector:
+    app: rancher
+  ports:
+    - name: https
+      port: 443
+      targetPort: 443
+      protocol: TCP

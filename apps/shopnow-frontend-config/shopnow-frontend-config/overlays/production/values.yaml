@@ -1,0 +1,7 @@
+# All ingress values now come from the chart defaults (shared ALB, no domain
+# this account owns). This overlay used to override them with a
+# certificate-arn, subnets, and ALB group from a different AWS account
+# (022499043310) and a domain (shopnow.tranvix.click) this account does not
+# control - the ALB controller could never build a model for that Ingress.
+# Left empty rather than deleted so a future real domain + cert has an obvious
+# place to go back into.

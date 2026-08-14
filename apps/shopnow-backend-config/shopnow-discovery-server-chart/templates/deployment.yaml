@@ -1,0 +1,173 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.global.appName }}-deployment
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: {{ .Values.global.appName }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit | default 10 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: {{ .Values.rollingUpdate.maxSurge }}
+      maxUnavailable: {{ .Values.rollingUpdate.maxUnavailable }}
+  selector:
+    matchLabels:
+      app: {{ .Values.global.appName }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.global.appName }}
+      {{- if .Values.global.enabledComponents.configmap }}
+      annotations:
+        # Editing a ConfigMap does not restart anything on its own - the pod keeps
+        # the old file until it is recreated. This hash changes with the data, so
+        # a config-only change still rolls the Deployment.
+        checksum/config: {{ toYaml .Values.configmap.data | sha256sum }}
+      {{- end }}
+    spec:
+      # Pin to the microservices node pool. BOTH halves are required and do
+      # different jobs:
+      #   toleration   -> lets the pod onto nodes carrying the taint
+      #   nodeSelector -> stops it drifting onto the infra or arm64 pools
+      # Dropping the toleration alone leaves the pod Pending with no clear reason.
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      # Topology spread rather than pod anti-affinity: anti-affinity is O(n^2) in
+      # the scheduler and gets visibly slow past a few hundred pods.
+      {{- if gt (int .Values.replicaCount) 1 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: {{ .Values.global.appName }}
+          # Without this a rolling update counts old and new pods together,
+          # computes a skew that was never real, and the rollout wedges.
+          # Requires k8s >= 1.27.
+          matchLabelKeys:
+            - pod-template-hash
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: {{ .Values.global.appName }}
+          matchLabelKeys:
+            - pod-template-hash
+      {{- end }}
+
+      # Spot nodes give a 2-minute warning. Shutdown has to fit inside it.
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 60 }}
+
+      securityContext:
+        runAsNonRoot: true
+        # Matches USER 10001 in the Dockerfile. kubelet cannot verify a named
+        # user, so the image sets a numeric one and this repeats it.
+        runAsUser: 10001
+        runAsGroup: 10001
+        {{- if .Values.persistence.enabled }}
+        # What lets the non-root process write to the EFS volume.
+        fsGroup: 10001
+        {{- end }}
+
+      containers:
+        - name: {{ .Values.global.appName }}
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+
+          # Karpenter sizes nodes purely from requests, so wrong requests mean
+          # wrong instance types and wrong cost. These are a starting point for a
+          # Spring Boot service, not measured numbers.
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          # TCP probes, not /actuator/health: spring-boot-starter-actuator is not
+          # a dependency in these services yet. An httpGet against a path that
+          # returns 404 fails the probe and CrashLoopBackOffs the pod.
+          #
+          # Swap all three to httpGet /actuator/health/{liveness,readiness} on a
+          # separate management port once actuator is added to the poms.
+          startupProbe:
+            tcpSocket:
+              port: http
+            # Spring Boot plus Eureka registration takes a while on a cold JVM.
+            # 30 x 5s = 150s before the pod is declared failed.
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          volumeMounts:
+            # Tomcat unpacks the WAR and writes work files here. Required
+            # because readOnlyRootFilesystem is on - without it the JVM dies at
+            # startup unable to create its temp directory.
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.global.enabledComponents.configmap }}
+            # Must match --spring.config.additional-location in the Dockerfile
+            # ENTRYPOINT. Mounting anywhere else means this ConfigMap is written
+            # to disk and then silently ignored.
+            - name: config-volume
+              mountPath: /app/config-override/application.properties
+              subPath: application.properties
+              readOnly: true
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: shared
+              mountPath: {{ .Values.persistence.mountPath }}
+            {{- end }}
+
+      {{- if .Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.image.pullSecret }}
+      {{- end }}
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.global.enabledComponents.configmap }}
+        - name: config-volume
+          configMap:
+            name: {{ .Values.global.appName }}-configmap
+            # defaultMode belongs here, inside configMap. At volume level - where
+            # the original chart had it - the API server rejects the whole
+            # Deployment with: strict decoding error: unknown field
+            # "spec.template.spec.volumes[1].defaultMode".
+            # 420 decimal is 0644.
+            defaultMode: 420
+        {{- end }}
+        {{- if .Values.persistence.enabled }}
+        - name: shared
+          persistentVolumeClaim:
+            claimName: {{ .Values.global.appName }}-efs
+        {{- end }}

@@ -1,0 +1,103 @@
+# Rancher server on cluster eks-workload.
+#
+# Chart 2.14.3 / app v2.14.3. Certifies Kubernetes v1.34.9, which is exactly
+# the patch this cluster runs (`kubectl get nodes` shows v1.34.9-eks-*).
+#
+#   helm upgrade --install rancher rancher-stable/rancher \
+#     --version 2.14.3 --namespace cattle-system --create-namespace \
+#     --values gitops/platform/addons/rancher/values.yaml --wait --timeout 10m
+#
+# Requires cert-manager already installed and Running - see
+# gitops/platform/addons/cert-manager. Rancher's install hook creates a
+# self-signed Issuer through cert-manager's CRDs during the chart's own
+# post-install step.
+
+# Lab: one replica, not the chart's default of 3. Three only makes sense with
+# real HA - a shared session/websocket-aware load balancer, more nodes than
+# this lab has, and a reason to survive a single replica's loss. None of that
+# applies here.
+replicas: 1
+
+# No Ingress, chart-managed or otherwise. Reached with `kubectl port-forward`
+# instead:
+#
+#   kubectl port-forward -n cattle-system svc/rancher 8443:443
+#   open https://localhost:8443
+#
+# This was tried through the shared eks-workload ALB first, and it did work -
+# curl against the real ALB returned 200, not just against a port-forward.
+# Getting there needed backend-protocol: HTTPS on the Ingress, because Rancher
+# answers plain HTTP with a 302 to https://<same host>/, which an HTTP-only ALB
+# listener (no ACM cert - this account owns no domain to issue one for) can
+# never satisfy.
+#
+# It came out anyway. The problem was not the ALB config but what reaching it
+# required every time: the URL had to be typed with an explicit `http://`,
+# because Chrome upgrades any bare-typed host:port to HTTPS on its own, and a
+# TLS handshake against an HTTP-only listener fails with
+# ERR_SSL_PROTOCOL_ERROR - a browser quirk that looks exactly like a server
+# problem from the address bar. For an admin tool one person opens
+# occasionally, port-forward removes that failure mode entirely along with the
+# ALB, the target group, and one more thing that can drift from the values
+# here. Bring the Ingress back from git history in
+# gitops/platform/ingress/admin-ingress.yaml if that trade stops being worth
+# it - the annotations that made it work are preserved there in a comment.
+networkExposure:
+  type: none
+
+# Irrelevant with no ingress at all, but left at the chart default rather than
+# removed - changing it wouldn't do anything here either way, and a stale
+# override is worse than an unused default.
+tls: ingress
+
+# The chart creates its own "rancher-critical" PriorityClass and uses it by
+# default, at value 1000000000 - close to Kubernetes' own
+# system-cluster-critical (2000000000). Karpenter, Argo CD and the Prometheus
+# stack on this same node group have no priorityClassName set, so they default
+# to 0. Under real resource pressure on these two shared t3.large nodes, a
+# priority that high lets the scheduler evict them to make room for Rancher.
+# Left at the default priority (empty = 0) instead: Rancher waits for room like
+# everything else here rather than displacing it.
+priorityClassName: ""
+
+# Rancher server is a management tool, not a customer-facing workload - it
+# belongs on the same node group as Karpenter and Argo CD, for the same reason
+# they are there: it has to stay up independently of the node pools it might
+# one day be used to reconfigure.
+#
+# This chart has no plain nodeSelector/tolerations keys. Its deployment
+# template only reads extraNodeSelectorTerms (appended into the SAME
+# matchExpressions list as the chart's own "not windows" term, so this ANDs
+# with it - both conditions must hold) and extraTolerations (appended next to
+# the chart's own hardcoded cattle.io/os=linux toleration). Plain
+# `nodeSelector:` / `tolerations:` keys in this values file are silently
+# ignored - Helm does not error on unknown values, it just never reads them,
+# which is how the first render of this file shipped a pod with no scheduling
+# pin at all.
+extraNodeSelectorTerms:
+  - key: role
+    operator: In
+    values:
+      - infra
+
+extraTolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+    effect: NoSchedule
+
+# Trimmed from Rancher's production HA sizing guidance (multiple GB per
+# replica) to fit this lab's two shared t3.large nodes alongside everything
+# else already running there. Bump these if the pod gets OOMKilled.
+resources:
+  requests:
+    cpu: 500m
+    memory: 1500Mi
+  limits:
+    cpu: 1000m
+    memory: 2500Mi
+
+# bootstrapPassword is intentionally left unset. Setting it here would put a
+# credential in a file meant to be committed to git. Rancher auto-generates one
+# into a Secret on first install instead - retrieve it with:
+#   kubectl get secret --namespace cattle-system bootstrap-secret \
+#     -o go-template='{{.data.bootstrapPassword|base64decode}}{{"\n"}}'

@@ -1,0 +1,32 @@
+# The single Application Terraform creates. Everything else is pulled in from here.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/tranvix0910/vib-eks-core.git
+    targetRevision: main
+    path: gitops/platform
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+
+# Sync wave order matters. Set argocd.argoproj.io/sync-wave on each child:
+#   -2  CRDs
+#   -1  controllers (LB controller, external-secrets)
+#    0  node pools        <- must exist before the first microservice syncs,
+#                            otherwise pods sit pending with no clear reason
+#    1  observability agents
+#    2  workloads

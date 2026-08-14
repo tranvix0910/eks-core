@@ -1,0 +1,95 @@
+# Global settings
+global:
+  appName: "shopnow-config-server"
+  namespace: "shopnow"
+  enabledComponents:
+    configmap: true
+    service: true
+    # Internal only. Spring Cloud Config serves unauthenticated configuration -
+    # including datasource credentials - to anything that can reach it. It has no
+    # business being on a load balancer.
+    ingress: false
+
+# Deployment
+#
+# repository is intentionally empty: the Argo CD Application supplies it, so the
+# account id lives in exactly one place.
+image:
+  repository: ""
+  tag: "v1"
+  pullPolicy: Always
+
+replicaCount: 1
+revisionHistoryLimit: 10
+rollingUpdate:
+  maxSurge: 25%
+  maxUnavailable: 25%
+
+nodeSelector:
+  workload: microservices
+tolerations:
+  - key: workload
+    operator: Equal
+    value: microservices
+    effect: NoSchedule
+
+terminationGracePeriodSeconds: 60
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 512Mi
+
+# Enabled but inert at 1 replica - see the guard in templates/pdb.yaml.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+persistence:
+  enabled: false
+  storageClass: efs-sc
+  size: 5Gi
+  mountPath: /data
+
+# Service
+#
+# 5859, matching server.port in the application's own application.properties.
+# This was 5865 before, which is the user-service port: the Service would have
+# pointed at a port nothing was listening on, and every config lookup would have
+# failed with connection refused.
+service:
+  type: ClusterIP
+  port: 5859
+  targetPort: 5859
+
+# Unused - ingress is disabled above. Left present so the shared template can
+# still render without a nil lookup.
+ingress:
+  className: "alb"
+  host: ""
+  path: "/"
+  pathType: Prefix
+  groupName: "eks-workload"
+  groupOrder: 90
+  listenPorts: '[{"HTTP": 5859}]'
+  # 0.0.0.0/0 - lab tradeoff, see gitops/platform/ingress/admin-ingress.yaml.
+  # This was a stale single-IP allowlist that no longer matched anyone's IP,
+  # making the service unreachable to the one person running this lab.
+  inboundCidrs: "0.0.0.0/0"
+  healthcheckPath: "/"
+  successCodes: "200-404"
+
+configmap:
+  data: {}
+
+serviceAccount:
+  create: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80

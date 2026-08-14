@@ -1,0 +1,80 @@
+# Internal ALB for cluster eks-observability - Mimir remote_write and Loki
+# push only. Never public: unlike cluster 1's admin tools (0.0.0.0/0 lab
+# tradeoff, see gitops/platform/ingress/admin-ingress.yaml), this ALB fronts
+# write endpoints with no authentication of their own - anyone reaching it
+# could inject fake metrics/logs. Restricting it to cluster 1's nodes only
+# costs nothing extra since both clusters already share one VPC.
+#
+#   kubectl apply -f gitops/platform/observability/ingress/internal-ingress.yaml
+#
+# security-groups pins this ALB to the one Terraform created and already
+# opened only to cluster 1's node security group - see
+# terraform/21-cluster-observability/main.tf
+# (aws_security_group.observability_alb and its two ingress rules). Without
+# this annotation the controller creates its own default security group open
+# to the Ingress's own inbound-cidrs instead, which would bypass that rule
+# entirely.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mimir
+  namespace: monitoring
+  annotations:
+    alb.ingress.kubernetes.io/group.name: eks-observability-internal
+    alb.ingress.kubernetes.io/group.order: "10"
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 9009}]'
+    # ARN from terraform/21-cluster-observability/tls.tf (output
+    # observability_alb_certificate_arn) - the cert cert-manager issued for
+    # mimir.observability.internal / loki.observability.internal, imported
+    # into ACM by hand since ALB only accepts certs that live in ACM/IAM.
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-1:963626856932:certificate/c44dffe6-044c-435e-8f44-2f01b7943cd9
+    # TLS terminates at the ALB; ALB -> pod stays HTTP (target-type: ip,
+    # same-VPC hop). Not end-to-end encrypted, but closes the gap this whole
+    # change was for: Prometheus/Alloy -> ALB, the leg that crosses between
+    # the two clusters' nodes.
+    alb.ingress.kubernetes.io/security-groups: eks-observability-internal-alb
+    alb.ingress.kubernetes.io/healthcheck-path: /ready
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mimir-gateway
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: loki
+  namespace: monitoring
+  annotations:
+    alb.ingress.kubernetes.io/group.name: eks-observability-internal
+    alb.ingress.kubernetes.io/group.order: "20"
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 3100}]'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:963626856932:certificate/721783f0-f7cf-40cd-a65d-fa78c01fdbbd
+    alb.ingress.kubernetes.io/security-groups: eks-observability-internal-alb
+    alb.ingress.kubernetes.io/healthcheck-path: /ready
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: loki-gateway
+                port:
+                  number: 80

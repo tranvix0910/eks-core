@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-database-services
+  namespace: argocd
+  annotations:
+    # Wave 0: the databases come up before the services that connect to them.
+    # The config and discovery servers are wave 1, the rest default to 0 but do
+    # not depend on ordering the way these do.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: shopnow
+  source:
+    # This repository, at shopnow-database-config.
+    #
+    # It pointed at github.com/tranvix0910/shopnow-manifest.git with path "." -
+    # that repository does not exist. Argo CD reports "repository not found" and
+    # the whole database layer never syncs, which then shows up as every
+    # microservice failing to reach postgres:5432.
+    repoURL: https://github.com/tranvix0910/shopnow-backend-config.git
+    targetRevision: main
+    path: shopnow-database-config
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: shopnow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10

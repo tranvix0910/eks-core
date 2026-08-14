@@ -1,0 +1,49 @@
+# cert-manager on cluster eks-workload.
+#
+# Chart v1.21.1. A hard prerequisite for Rancher - Rancher's post-install hooks
+# create a self-signed Issuer/Certificate through cert-manager's CRDs even when
+# nothing outside the cluster ever validates that certificate.
+#
+#   helm upgrade --install cert-manager jetstack/cert-manager \
+#     --version v1.21.1 --namespace cert-manager --create-namespace \
+#     --values gitops/platform/addons/cert-manager/values.yaml --wait
+#
+# Four separate deployments (controller, webhook, cainjector, plus the
+# startupapicheck Job), each with its own nodeSelector/tolerations block - the
+# chart does not have one shared setting. Every node here is tainted, so all
+# four need the same pin to the managed node group or three of them sit
+# Pending with no explanation.
+
+crds:
+  enabled: true
+
+nodeSelector:
+  role: infra
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+    effect: NoSchedule
+
+webhook:
+  nodeSelector:
+    role: infra
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+      effect: NoSchedule
+
+cainjector:
+  nodeSelector:
+    role: infra
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+      effect: NoSchedule
+
+startupapicheck:
+  nodeSelector:
+    role: infra
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+      effect: NoSchedule

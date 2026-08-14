@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The stateful layer the microservices depend on: Postgres for application data,
+# MySQL plus Keycloak for authentication.
+#
+# The files under kustomize/patches/ are plain resources, not kustomize patches -
+# the directory name is a leftover. They are listed in dependency order, though
+# kustomize does not act on that; Argo CD sync waves in the Application do.
+
+resources:
+  # First: the namespace everything else is placed in. It was missing from this
+  # list, so a fresh cluster failed the sync with "namespaces \"shopnow\" not
+  # found" for every resource at once.
+  - namespace.yaml
+
+  - kustomize/patches/storage-patch.yaml
+  - kustomize/patches/keycloak-realm-configmap.yaml
+  - kustomize/patches/shopnow-postgresql.yaml
+  - kustomize/patches/shopnow-keycloak-mysql.yaml
+  - kustomize/patches/shopnow-keycloak-realms.yaml
+
+namespace: shopnow
+
+# Tag pins. The manifests carry the same tags explicitly; these keep a bare
+# `image: postgres` from ever resolving to :latest.
+images:
+  - name: mysql
+    newTag: "8.0"
+  - name: quay.io/keycloak/keycloak
+    newTag: "23.0.3"
+  - name: postgres
+    newTag: "15"
+
+# The storage-class.yaml that used to sit alongside these files is gone. It
+# declared an ebs-sc StorageClass with no parameters, duplicating the cluster
+# default gp3 but without encryption - and it was never listed here, so it was
+# never applied. The PVCs now name gp3 directly.

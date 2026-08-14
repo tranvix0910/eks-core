@@ -1,0 +1,60 @@
+# Karpenter controller values for cluster eks-workload.
+#
+# Nothing in this file changes when the cluster is rebuilt. Both values below are
+# derived from the cluster NAME, which is fixed in terraform locals, so there is
+# no terraform output to copy in after an apply.
+
+settings:
+  clusterName: eks-workload
+
+  # clusterEndpoint is deliberately absent.
+  #
+  # It used to be pinned to the API server URL, which contains a random hash and
+  # therefore changed with every new cluster. Forgetting to update it left
+  # Karpenter unable to reach the API server, logging connection errors while no
+  # NodePool ever produced a machine - with everything else looking correct.
+  #
+  # Karpenter resolves the endpoint itself through the EKS DescribeCluster API
+  # when this is not set, and it already has clusterName above. See
+  # https://karpenter.sh/v1.0/reference/settings/
+  #
+  # (Content rephrased for compliance with licensing restrictions.)
+
+  # SQS queue created by terraform. Karpenter polls it for interruption warnings
+  # and drains the node inside the 2-minute window; without it spot nodes vanish
+  # with their pods still running.
+  #
+  # Safe to hardcode: the module derives the name as
+  # "Karpenter-<cluster_name>" with no random part, so it survives a rebuild.
+  interruptionQueue: Karpenter-eks-workload
+
+serviceAccount:
+  # Must match the Pod Identity association terraform created. Do NOT add an
+  # eks.amazonaws.com/role-arn annotation - that is IRSA, and this cluster uses
+  # Pod Identity instead.
+  name: karpenter
+
+# Karpenter has to run on the managed node group, never on nodes it manages.
+# Without this it can consolidate away the node it is running on, and nothing is
+# left to bring the autoscaler back.
+nodeSelector:
+  role: infra
+
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+    effect: NoSchedule
+
+replicas: 2
+
+controller:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+# Lab: keep logs readable. Set to debug when a node refuses to launch - the
+# controller logs explain exactly which constraint could not be satisfied.
+logLevel: info

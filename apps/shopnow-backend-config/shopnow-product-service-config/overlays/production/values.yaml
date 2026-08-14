@@ -1,0 +1,57 @@
+# Production overlay.
+#
+# The ingress block that used to live here is gone on purpose:
+#   certificateArn  - the certificate was issued in account 022499043310 for
+#                     *.tranvix.click. Neither the account nor the domain is ours,
+#                     so the annotation could only ever fail to resolve.
+#   subnets         - three subnet ids from a different VPC. The load balancer
+#                     controller discovers subnets from the kubernetes.io/role/elb
+#                     tags layer 10 sets, so nothing needs to be listed here.
+#   listenPorts /
+#   sslRedirect     - moved into the chart's values.yaml, where the port is set
+#                     per service on the shared eks-workload ALB.
+#
+# What remains is the only thing an overlay should hold: environment-specific
+# configuration.
+#
+# This content is properties syntax, which matches the .properties path the
+# Dockerfile passes to spring.config.additional-location. Spring Boot picks its
+# parser from the file extension, so renaming this key to .yaml would silently
+# break parsing even though the service's own baked-in file is application.yaml.
+configmap:
+  data:
+    application.properties: |
+      # Switches off the baked-in `localhost` profile.
+      #
+      # The image's own application.yaml has spring.profiles.active: localhost and
+      # a document activated on that profile which sets
+      # eureka...defaultZone=http://discovery-server:8761/eureka/. There is no
+      # Service called discovery-server in this cluster - it is
+      # shopnow-discovery-server-service - so the service would register nowhere
+      # and log connection refused on a loop.
+      #
+      # Overriding the eureka key alone is not enough to rely on: a
+      # profile-activated document versus a plain key from a later config location
+      # is exactly the precedence corner Spring Boot is subtle about. Naming a
+      # profile that no document activates on removes the competing value
+      # entirely, so there is nothing to reason about.
+      spring.profiles.active=production
+
+      spring.application.name=product-service
+      server.port=5861
+
+      # Bare "product-service" doesn't resolve - the real K8s Service is
+      # shopnow-product-service-service. This was invisible until something
+      # actually tried to connect to the address Eureka hands out (the new
+      # api-gateway's lb:// resolution) - registration/heartbeat both worked
+      # fine either way.
+      eureka.instance.hostname=shopnow-product-service-service
+      eureka.instance.instance-id=${spring.application.name}
+      eureka.client.service-url.defaultZone=http://shopnow-discovery-server-service:8761/eureka/
+
+      spring.datasource.url=jdbc:postgresql://postgres:5432/postgres?useSSL=false
+      spring.datasource.username=postgres
+      spring.datasource.password=admin
+      spring.jpa.hibernate.ddl-auto=update
+      spring.jpa.show-sql=true
+      spring.jpa.properties.hibernate.format-sql=true

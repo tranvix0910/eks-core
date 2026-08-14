@@ -1,0 +1,173 @@
+# Ingress for the admin tools, all sharing ONE ALB.
+#
+#   kubectl apply -f gitops/platform/ingress/admin-ingress.yaml
+#
+# ---------------------------------------------------------------------------
+# One ALB, separated by listener port
+# ---------------------------------------------------------------------------
+# alb.ingress.kubernetes.io/group.name makes every Ingress here land on the same
+# load balancer instead of each creating its own - one ALB at ~$16/month rather
+# than three. The microservices Ingress will join this same group later.
+#
+# We are using the ALB's own DNS name, so there is only one hostname available
+# and host-based routing is not an option. Path-based routing would work but
+# Prometheus and Alertmanager would each need a matching routePrefix, and their
+# internal redirects break easily when they are wrong.
+#
+# Separating by listener port avoids all of that:
+#
+#   http://<alb-dns>        -> Argo CD
+#   http://<alb-dns>:9090   -> Prometheus
+#   http://<alb-dns>:9093   -> Alertmanager
+#   http://<alb-dns>:8081   -> JavaMelody collector
+#
+# ---------------------------------------------------------------------------
+# inbound-cidrs is open to 0.0.0.0/0 - a deliberate lab tradeoff, not an oversight
+# ---------------------------------------------------------------------------
+# This started locked to a single /32. That broke every time the workstation's
+# ISP-assigned IP rotated - twice within a week - each time needing a manual
+# `curl -s -4 ifconfig.me` + edit + kubectl apply before anything was reachable
+# again. For a lab with one user, that cost more than it protected against, so
+# this is now open to the internet on all four ports instead.
+#
+# What that actually means: Prometheus and Alertmanager have NO authentication
+# of their own. Anyone who finds this ALB's DNS name reads every metric, and
+# can use Alertmanager to silence alerts. There is nothing sensitive behind
+# either right now - accept this exposure only as long as that stays true.
+#
+# JavaMelody is exposed here too, on port 8081, and is the one to pull back out
+# first if anything changes. Right now it monitors nothing, so there is nothing
+# to leak. The moment a real Java application connects to it, its UI starts
+# showing thread dumps, heap histograms, SQL statements WITH THEIR PARAMETERS,
+# and system properties - genuine application and possibly customer data. At
+# that point, narrow inbound-cidrs back down or drop this Ingress entirely and
+# go back to port-forward:
+#   kubectl port-forward -n javamelody svc/javamelody-collector 8081:8080
+#
+# HTTP only: no ACM certificate, because the ALB DNS name is not a domain we
+# control and no certificate can be issued for it.
+#
+# Before this is ever anything but a lab: put real authentication in front
+# (ALB OIDC, or a proper domain + SSO proxy), not an open listener.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    alb.ingress.kubernetes.io/group.name: eks-workload
+    alb.ingress.kubernetes.io/group.order: "10"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/inbound-cidrs: 0.0.0.0/0
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus
+  namespace: monitoring
+  annotations:
+    alb.ingress.kubernetes.io/group.name: eks-workload
+    alb.ingress.kubernetes.io/group.order: "20"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 9090}]'
+    alb.ingress.kubernetes.io/inbound-cidrs: 0.0.0.0/0
+    alb.ingress.kubernetes.io/healthcheck-path: /-/healthy
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus-kube-prometheus-prometheus
+                port:
+                  number: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  annotations:
+    alb.ingress.kubernetes.io/group.name: eks-workload
+    alb.ingress.kubernetes.io/group.order: "30"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 9093}]'
+    alb.ingress.kubernetes.io/inbound-cidrs: 0.0.0.0/0
+    alb.ingress.kubernetes.io/healthcheck-path: /-/healthy
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus-kube-prometheus-alertmanager
+                port:
+                  number: 9093
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: javamelody
+  namespace: javamelody
+  annotations:
+    alb.ingress.kubernetes.io/group.name: eks-workload
+    alb.ingress.kubernetes.io/group.order: "40"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 8081}]'
+    alb.ingress.kubernetes.io/inbound-cidrs: 0.0.0.0/0
+    alb.ingress.kubernetes.io/healthcheck-path: /
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: javamelody-collector
+                port:
+                  number: 8080
+
+# Rancher is deliberately not here. It was added back briefly (group.order 50,
+# port 9443, backend-protocol HTTPS to work around Rancher's forced
+# HTTP->HTTPS redirect) and the page loaded and the login API call itself
+# genuinely succeeded - but login never completed. Rancher's session cookie is
+# marked Secure, so it is only ever set over a connection the browser sees as
+# real HTTPS. This ALB listener is plain HTTP (no ACM certificate - the ALB's
+# own *.elb.amazonaws.com hostname is not a domain a certificate can be issued
+# for), so the login response carried no Set-Cookie header at all, and every
+# follow-up request (e.g. ext.cattle.io.selfuser) came back
+# "401: must authenticate" even though the credentials were correct. This is
+# not a config mistake fixable with an annotation - Rancher requires HTTPS
+# all the way to the browser to issue that cookie, and nothing short of a
+# real ACM certificate (which needs a domain this account controls) changes
+# that. Back to port-forward:
+#   kubectl port-forward -n cattle-system svc/rancher 8443:443
+# then https://localhost:8443 - explicit scheme, self-signed cert warning is
+# expected and safe to click through (it is Rancher's own internal cert).

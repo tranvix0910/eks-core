@@ -1,0 +1,62 @@
+# Prometheus for cluster eks-observability. Receives remote_write from
+# cluster 1's Prometheus - see gitops/platform/addons/prometheus/values.yaml
+# on cluster 1 for the sending side.
+#
+#   kubectl config use-context eks-observability
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+#     --version 88.1.5 --namespace monitoring \
+#     --values gitops/platform/observability/prometheus/values.yaml --wait
+#
+# Same chart cluster 1 already runs, one flag different: this one receives
+# instead of scraping. Chosen over Mimir (which the codebase briefly assumed
+# in an old comment) because the actual requirement just says "Prometheus,
+# Grafana, Loki" - Mimir is a real upgrade path if this ever needs real
+# multi-tenancy or horizontal scale, not a requirement for a two-cluster lab.
+# Mimir's chart also has no simpler deployment mode: every component always
+# runs as its own Deployment/StatefulSet, and getting a lab-sized single
+# replica of each past its S3/ring/ingest-storage defaults took five rounds
+# of real crash logs to work through - not worth it for what this needs.
+
+prometheus:
+  prometheusSpec:
+    enableRemoteWriteReceiver: true
+
+    nodeSelector:
+      role: monitoring
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+          # storageClassName omitted - picks up the cluster's default
+          # StorageClass (gp3), same as everywhere else in this project.
+
+    # Cluster 1's own metrics (node-exporter, kube-state-metrics, control
+    # plane) already exist there and ship here via remote_write - scraping
+    # them again from this cluster would be pointless. Nothing local on
+    # cluster 2 needs monitoring at lab scale either.
+    externalLabels:
+      cluster: eks-observability
+
+# Nothing here scrapes anything of its own, so none of these subcharts have a
+# job. Deploying them anyway would just be more idle pods on 2 t3.medium
+# nodes that are already running Loki + Grafana + this Prometheus.
+alertmanager:
+  enabled: false
+grafana:
+  enabled: false
+nodeExporter:
+  enabled: false
+kubeStateMetrics:
+  enabled: false

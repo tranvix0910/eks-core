@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: shopnow
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate. The PVC is ReadWriteOnce, so a second pod cannot
+  # attach the same EBS volume: a rolling update deadlocks with the new pod stuck
+  # in ContainerCreating on "Multi-Attach error" while the old one refuses to go.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      # On-demand nodes only. This pod owns an EBS volume, and a spot reclaim
+      # means the database is down until the replacement node comes up and
+      # reattaches it. capacity=on-demand selects the ms-od pool specifically -
+      # workload=microservices alone also matches the spot pool.
+      nodeSelector:
+        workload: microservices
+        capacity: on-demand
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: microservices
+          effect: NoSchedule
+
+      # postgres:15 runs as uid 999 and needs to own its data directory.
+      securityContext:
+        fsGroup: 999
+
+      containers:
+        - name: postgres
+          image: postgres:15
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: "postgres"
+            - name: POSTGRES_USER
+              value: "postgres"
+            # Plain text in git, and the same value the services use in their
+            # ConfigMaps. This is the first thing to move to External Secrets and
+            # Secrets Manager.
+            - name: POSTGRES_PASSWORD
+              value: "admin"
+            # Required when the data directory is a mounted volume: the mount root
+            # is not empty (lost+found), and initdb refuses to run in a non-empty
+            # directory. A subdirectory sidesteps it - this matches the subPath
+            # below.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+
+          # pg_isready, not a TCP check. Postgres accepts connections on 5432
+          # while it is still replaying WAL and rejects every query, so a TCP
+          # probe reports ready too early and the services fail their first
+          # connection.
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "postgres"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "postgres"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: postgresql-data
+              subPath: postgresql
+      volumes:
+        - name: postgresql-data
+          persistentVolumeClaim:
+            claimName: postgresql-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: shopnow
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      protocol: TCP
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP

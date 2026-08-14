@@ -1,0 +1,48 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ .Values.global.appName }}-rollout
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.global.appName }}
+  strategy:
+    blueGreen:
+      activeService: {{ .Values.global.appName }}-service
+      previewService: {{ .Values.global.appName }}-preview-service
+      # Manual gate on purpose - see shopnow-frontend-preview-service.yaml and
+      # `kubectl argo rollouts promote` for how a new version goes live.
+      autoPromotionEnabled: false
+      # Keep the outgoing ReplicaSet warm for 30s after promote, so `kubectl
+      # argo rollouts undo` can roll back without a cold start.
+      scaleDownDelaySeconds: 30
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.global.appName }}
+    spec:
+      containers:
+        - name: {{ .Values.global.appName }}
+          {{- if .Values.image.repository }}
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          {{- end }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.targetPort }}
+          {{- if .Values.global.enabledComponents.configmap }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /app/src/main/resources/application.properties
+          {{- end }}
+      {{- if .Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.image.pullSecret }}
+      {{- end }}
+      {{- if .Values.global.enabledComponents.configmap }}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: {{ .Values.global.appName }}-configmap
+      {{- end }}

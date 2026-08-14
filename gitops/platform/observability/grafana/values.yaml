@@ -1,0 +1,97 @@
+# Grafana for cluster eks-observability. Single UI to query both Mimir
+# (metrics) and Loki (logs) - see gitops/platform/observability/{mimir,loki}.
+#
+#   kubectl config use-context eks-observability
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm upgrade --install grafana grafana/grafana --version 10.5.15 \
+#     --namespace monitoring --create-namespace \
+#     --values gitops/platform/observability/grafana/values.yaml --wait
+#
+# No adminPassword set here on purpose - the chart auto-generates one into a
+# Secret (grafana, key admin-password) when left unset. Same reasoning as
+# ArgoCD's bootstrap-secret and Rancher's bootstrap-password on cluster 1:
+# retrieve it with kubectl, never commit a real credential to this repo.
+#
+#   kubectl get secret grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d
+
+persistence:
+  enabled: true
+  size: 5Gi
+  # storageClassName unset - picks up the cluster's default StorageClass
+  # (gp3), same as everything else in this project.
+
+nodeSelector:
+  role: monitoring
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Mimir
+        type: prometheus
+        # Internal cluster DNS, not the ALB - Grafana and Mimir are in the
+        # same cluster and namespace, so there is no reason to make this
+        # round-trip through a load balancer.
+        url: http://mimir-gateway.monitoring.svc.cluster.local/prometheus
+        access: proxy
+        isDefault: true
+        jsonData:
+          # Mimir requires X-Scope-OrgID on every request once multitenancy
+          # is on (the chart default) - without this header every query
+          # fails with "no org id". "eks-workload" matches the tenant id
+          # cluster 1's Prometheus remote_write sends - see
+          # gitops/platform/addons/prometheus/values.yaml.
+          httpHeaderName1: "X-Scope-OrgID"
+        secureJsonData:
+          httpHeaderValue1: "eks-workload"
+
+      - name: Loki
+        type: loki
+        url: http://loki-gateway.monitoring.svc.cluster.local
+        access: proxy
+
+# Community dashboards, fetched from grafana.com by gnetId at pod init - not
+# hand-built, since these three are the well-established standard for exactly
+# the metric/log shape this project produces (kube-prometheus-stack's own
+# node-exporter + kube-state-metrics scrape targets, remote_written into
+# Mimir as-is; and Loki's own {cluster=...} label). revision pinned to each
+# dashboard's current value from the grafana.com API at the time this was
+# written, not left floating - an unpinned revision can change shape under
+# us on a future `helm upgrade` with no code change on our side to explain it.
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+
+dashboards:
+  default:
+    node-exporter-full:
+      # https://grafana.com/grafana/dashboards/1860 - per-node CPU/mem/disk/network,
+      # built directly on prometheus-node-exporter metrics (already scraped by
+      # kube-prometheus-stack on cluster 1, no extra recording rules needed).
+      gnetId: 1860
+      revision: 45
+      datasource: Mimir
+    kubernetes-cluster-monitoring:
+      # https://grafana.com/grafana/dashboards/315 - cluster/namespace/pod
+      # resource usage, built on cAdvisor + kube-state-metrics raw metrics
+      # (also already scraped) rather than kubernetes-mixin recording rules,
+      # which keeps it working even if those rules aren't all present.
+      gnetId: 315
+      revision: 3
+      datasource: Mimir
+    loki-logs-app:
+      # https://grafana.com/grafana/dashboards/13639 - log volume + live tail
+      # style panels filterable by the same labels Alloy attaches
+      # (cluster/namespace/pod/container) - see gitops/platform/addons/alloy/values.yaml.
+      gnetId: 13639
+      revision: 2
+      datasource: Loki

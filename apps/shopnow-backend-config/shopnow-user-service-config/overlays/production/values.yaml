@@ -1,0 +1,46 @@
+# Production overlay.
+#
+# The ingress block that used to live here is gone: the ACM certificate belonged
+# to account 022499043310 and the domain *.tranvix.click is not ours, and the
+# three hardcoded subnet ids were from a different VPC. Listener ports now live
+# in the chart's values.yaml, one per service on the shared eks-workload ALB.
+configmap:
+  data:
+    application.properties: |
+      # Switches off the baked-in `localhost` profile, whose profile-activated
+      # document points eureka at http://discovery-server:8761 - a Service that
+      # does not exist here; it is shopnow-discovery-server-service. Naming a
+      # profile nothing activates on removes the competing value rather than
+      # relying on override precedence against a profile-specific document.
+      spring.profiles.active=production
+
+      # Application configuration
+      spring.application.name=user-service
+      server.port=5865
+
+      # Bare "user-service" doesn't resolve - the real K8s Service is
+      # shopnow-user-service-service. See shopnow-product-service-config for
+      # why this was invisible until now.
+      eureka.instance.hostname=shopnow-user-service-service
+      eureka.instance.instance-id=${spring.application.name}
+      eureka.client.service-url.defaultZone=http://shopnow-discovery-server-service:8761/eureka/
+
+      # Datasource configuration
+      spring.datasource.url=jdbc:postgresql://postgres:5432/postgres?useSSL=false
+      spring.datasource.username=postgres
+      spring.datasource.password=admin
+      spring.jpa.hibernate.ddl-auto=update
+      spring.jpa.show-sql=true
+      spring.jpa.properties.hibernate.format-sql=true
+
+      # JWT configuration.
+      #
+      # The client secret is in plain text in git. It is the demo realm's secret,
+      # imported from keycloak-realms/realm-export.json, so it is already public
+      # in this repository - but this is exactly the value that should come from
+      # External Secrets and Secrets Manager before anything real runs here.
+      jwt.issuer_uri=http://shopnow-keycloak-realms-service:8080/realms/java-microservice-realm/protocol/openid-connect/token
+      jwt.client_id=spring-cloud-client
+      jwt.client_secret=AJufwN1eof8P5Gga5Y9atCFqdMuZEuKd
+      jwt.grant_type=client_credentials
+      jwt.scope=openid offline_access

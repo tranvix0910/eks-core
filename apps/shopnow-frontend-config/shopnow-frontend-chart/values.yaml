@@ -1,0 +1,70 @@
+# Global settings
+global:
+  appName: "shopnow-frontend"
+  namespace: "shopnow"
+  environment: "production"  # dev, staging, production
+  enabledComponents:
+    configmap: false
+    service: true
+    ingress: true
+
+# Deployment
+image:
+  repository: ""
+  tag: "v1.0.2_a48660f"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+rollingUpdate:
+  maxSurge: 25%
+  maxUnavailable: 25%
+
+# Service
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 80
+
+# Ingress
+#
+# Joins the shared ALB (group.name eks-workload) that the admin tools and the
+# 5 backend services already use, on its own listener port - see
+# shopnow-*-chart/templates/ingress.yaml for the same pattern. The previous
+# version of this chart pointed at shopnow.tranvix.click with a certificate-arn
+# and subnets from a different AWS account (022499043310); that domain and
+# those subnets do not exist in this account's VPC, so the ALB controller could
+# never build a model for it - see FailedBuildModel events on the Ingress.
+ingress:
+  className: "alb"
+  host: ""
+  path: "/"
+  pathType: Prefix
+  groupName: "eks-workload"
+  groupOrder: 100
+  # 8080 collides with shopnow-keycloak-realms-ingress (database-config) on
+  # the same shared ALB - the controller refuses to merge two Ingresses that
+  # claim the same listener port with different inbound-cidrs. 8082 is free
+  # across every other Ingress in the eks-workload group.
+  listenPorts: '[{"HTTP": 8082}]'
+  inboundCidrs: "0.0.0.0/0"
+  healthcheckPath: "/"
+  successCodes: "200"
+
+# ConfigMap
+configmap:
+  data: {}
+  # Example:
+  # data:
+  #   application.properties: |
+  #     server.port=8080
+  #     spring.datasource.url=jdbc:mysql://db-service:3306/mydb
+
+serviceAccount:
+  create: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80

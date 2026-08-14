@@ -1,0 +1,71 @@
+# AWS Load Balancer Controller for cluster eks-workload.
+#
+# Chart 3.5.0 / controller v3.5.0
+#
+#   helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+#     --version 3.5.0 --namespace kube-system \
+#     --values gitops/platform/addons/aws-load-balancer-controller/values.yaml --wait
+#
+# Reads Ingress objects and builds real ALBs, target groups and listener rules.
+#
+# Three differences from the AWS workshop instructions, all of which matter here:
+#
+#   1. The workshop points at https://aws.github.io/aws-eks-best-practices/charts,
+#      which does not exist. The chart lives at https://aws.github.io/eks-charts.
+#   2. The workshop pins chart 1.13.0; current is 3.5.0.
+#   3. The workshop uses eksctl and IRSA. This cluster grants AWS permissions
+#      with Pod Identity, created in terraform, so the ServiceAccount needs no
+#      role annotation at all.
+
+# vpcId goes stale every time the VPC is destroyed and recreated (layer
+# 10-network apply) - this exact value already caused a real outage once:
+# "Evaluated 0 subnets" on every Ingress reconcile, because the controller
+# was searching for subnets in a VPC that no longer existed. The controller
+# does not fail loudly when this happens; new/changed Ingress objects just
+# never get an ALB, silently, until someone reads the controller's own logs.
+#
+# ...and it happened a SECOND time, on the Tokyo rebuild (2026-08-14). Both
+# region and vpcId were still the Singapore values, so argocd/prometheus/
+# alertmanager Ingresses sat 23 minutes with no ADDRESS while the controller
+# logged the same "Evaluated 0 subnets" once per reconcile. The subnet tags
+# were correct the whole time - the controller was simply looking in
+# ap-southeast-1 at a VPC that does not exist there.
+#
+# Both values below MUST be refreshed after every layer-10 apply and after any
+# region move. Do not copy them from an older cluster:
+#   terraform -chdir=terraform/10-network output vpc_id
+#   terraform -chdir=terraform/20-cluster-workload output -raw kubeconfig_command   # region
+clusterName: eks-workload
+region: ap-northeast-1
+vpcId: vpc-03af8e02142a62658
+
+# Let the chart create the ServiceAccount. Pod Identity binds the IAM role to it
+# by name, so there is no eks.amazonaws.com/role-arn annotation - that is IRSA.
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+
+# Every node in this cluster is tainted: the managed node group with
+# CriticalAddonsOnly, and each Karpenter pool with its own. A controller without
+# tolerations stays Pending forever.
+nodeSelector:
+  role: infra
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+    effect: NoSchedule
+
+# Lab: one replica. Production wants 2 with anti-affinity across AZs.
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+# Target pods directly by IP rather than through NodePort. Traffic skips a hop,
+# and target registration survives node replacement - which matters when
+# Karpenter is consolidating nodes underneath.
+defaultTargetType: ip

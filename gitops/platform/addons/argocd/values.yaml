@@ -1,0 +1,107 @@
+# Argo CD on cluster 1 (eks-workload).
+#
+# Chart 10.3.0 / Argo CD v3.5.0
+#
+#   helm upgrade --install argocd argo/argo-cd \
+#     --version 10.3.0 --namespace argocd --create-namespace \
+#     --values gitops/platform/addons/argocd/values.yaml --wait
+#
+# Every component pins to the managed node group. Argo CD must stay alive
+# independently of Karpenter - if it went down together with the nodes it
+# manages, there would be nothing left to redeploy anything.
+
+global:
+  nodeSelector:
+    role: infra
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+      effect: NoSchedule
+
+# Lab: single replica per component. For production set ha.enabled and give the
+# redis and repo-server replicas anti-affinity across AZs.
+redis-ha:
+  enabled: false
+
+controller:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+repoServer:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+applicationSet:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+server:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  # Lab: reach the UI with `kubectl port-forward svc/argocd-server -n argocd 8080:443`.
+  # No ingress and no load balancer means nothing is exposed and nothing costs
+  # money. Switch to an internal ALB when a real endpoint is needed - never an
+  # internet-facing one.
+  service:
+    type: ClusterIP
+
+  # Serve plain HTTP inside the cluster. TLS terminates at the ingress once
+  # there is one; until then this avoids the self-signed certificate warning on
+  # every port-forward.
+  extraArgs:
+    - --insecure
+
+  # Renders Rollout resources (Blue-Green/Canary) as a proper visualization in
+  # the UI instead of raw YAML. v0.4.0+ required for Argo CD v3.5 - see
+  # https://github.com/argoproj-labs/rollout-extension.
+  extensions:
+    enabled: true
+    extensionList:
+      - name: rollout-extension
+        env:
+          - name: EXTENSION_URL
+            value: https://github.com/argoproj-labs/rollout-extension/releases/download/v0.4.0/extension.tar
+
+configs:
+  params:
+    server.insecure: true
+
+  cm:
+    # Argo CD prunes and self-heals by default in the Applications we define,
+    # not globally. This just sets the resource exclusions that keep the UI
+    # readable on EKS.
+    resource.exclusions: |
+      - apiGroups:
+          - discovery.k8s.io
+        kinds:
+          - EndpointSlice
+        clusters:
+          - "*"
+
+notifications:
+  enabled: false
+
+dex:
+  # No SSO for a lab. The admin password is generated into a secret:
+  #   kubectl -n argocd get secret argocd-initial-admin-secret \
+  #     -o jsonpath='{.data.password}' | base64 -d
+  enabled: false

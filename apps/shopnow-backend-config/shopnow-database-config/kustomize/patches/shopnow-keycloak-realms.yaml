@@ -1,0 +1,193 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shopnow-keycloak-realms-deployment
+  namespace: shopnow
+  labels:
+    app: shopnow-keycloak-realms
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shopnow-keycloak-realms
+  template:
+    metadata:
+      labels:
+        app: shopnow-keycloak-realms
+    spec:
+      nodeSelector:
+        workload: microservices
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: microservices
+          effect: NoSchedule
+
+      # Keycloak refuses to start against a database that is not accepting
+      # connections yet, and a CrashLoopBackOff backoff reaches five minutes fast.
+      # This blocks until MySQL answers instead.
+      initContainers:
+        - name: wait-for-mysql
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z shopnow-keycloak-mysql-service 3306; do
+                echo "waiting for mysql"; sleep 3
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:23.0.3
+          args:
+            - "start"
+            - "--import-realm"
+            # Required in start mode. Without it Keycloak demands its own TLS key
+            # material and exits with "Key material not provided to setup HTTPS";
+            # TLS is terminated at the ALB here.
+            - "--http-enabled=true"
+            # No hostname pinned. It used to be keycloak-shopnow.tranvix.click,
+            # a domain that is not ours: Keycloak then builds every issuer and
+            # redirect URL from that name and the browser is sent somewhere that
+            # does not resolve. Strict mode off lets it use the Host header the
+            # ALB forwards.
+            - "--hostname-strict=false"
+            - "--proxy=edge"
+          env:
+            # KC_DB_*, not DB_VENDOR/DB_ADDR.
+            #
+            # DB_VENDOR and friends are the Keycloak 16-and-earlier WildFly
+            # variables. Keycloak 23 ignores them completely and silently falls
+            # back to the embedded H2 dev-file database - so it starts, looks
+            # healthy, and loses every user and client on restart while the MySQL
+            # pod next to it stays empty.
+            - name: KC_DB
+              value: mysql
+            - name: KC_DB_URL
+              value: jdbc:mysql://shopnow-keycloak-mysql-service:3306/keycloak
+            - name: KC_DB_USERNAME
+              value: keycloak
+            - name: KC_DB_PASSWORD
+              value: password
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KEYCLOAK_ADMIN
+              value: admin
+            # Plain text in git - move to External Secrets before this is anything
+            # but a lab.
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              value: admin
+          ports:
+            - containerPort: 8080
+              name: http
+
+          resources:
+            requests:
+              cpu: 250m
+              memory: 768Mi
+            limits:
+              memory: 1Gi
+
+          # Enabled by KC_HEALTH_ENABLED above. Realm import on a cold database
+          # takes a while, hence the generous startup budget: 40 x 5s = 200s.
+          startupProbe:
+            httpGet:
+              path: /health/started
+              port: http
+            failureThreshold: 40
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 20
+
+          volumeMounts:
+            # Read-only is fine: --import-realm only reads from this directory.
+            # The 5Gi keycloak-realms PVC that used to be mounted here has been
+            # removed - the realm has always come from this ConfigMap, so the
+            # volume held nothing.
+            - mountPath: /opt/keycloak/data/import/realm-export.json
+              name: realm-config
+              subPath: realm-export.json
+              readOnly: true
+      volumes:
+        - name: realm-config
+          configMap:
+            name: keycloak-realm-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shopnow-keycloak-realms-service
+  namespace: shopnow
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    app: shopnow-keycloak-realms
+  sessionAffinity: None
+  type: ClusterIP
+---
+# Joins the shared eks-workload ALB on listener port 8080.
+#
+# What was removed and why:
+#   host keycloak-shopnow.tranvix.click - not our domain, so the rule matched
+#     nothing and the admin console was unreachable.
+#   certificate-arn - issued in account 022499043310 for that domain.
+#   subnets - three ids from a different VPC. The load balancer controller finds
+#     subnets from the kubernetes.io/role/elb tags layer 10 sets.
+#   ssl-redirect - pointless without a certificate.
+#   group.name shopnow - would have built a second ALB. eks-workload is the group
+#     the admin tools already use.
+#
+# The admin console has a real password, but it is admin/admin - trivial to
+# guess. inbound-cidrs is 0.0.0.0/0 (same lab tradeoff as every other Ingress
+# in this group, see gitops/platform/ingress/admin-ingress.yaml), which means
+# that weak default is now the ONLY thing standing between this console and
+# the internet. Change KEYCLOAK_ADMIN_PASSWORD before this is ever anything
+# but a lab, and narrow this back down first if that isn't done yet.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shopnow-keycloak-realms-ingress
+  namespace: shopnow
+  annotations:
+    alb.ingress.kubernetes.io/group.name: eks-workload
+    alb.ingress.kubernetes.io/group.order: "45"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 8080}]'
+    # 0.0.0.0/0 - lab tradeoff, see gitops/platform/ingress/admin-ingress.yaml.
+    # This was a stale single-IP allowlist that no longer matched anyone's IP.
+    alb.ingress.kubernetes.io/inbound-cidrs: 0.0.0.0/0
+    alb.ingress.kubernetes.io/healthcheck-path: /health/ready
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shopnow-keycloak-realms-service
+                port:
+                  number: 8080

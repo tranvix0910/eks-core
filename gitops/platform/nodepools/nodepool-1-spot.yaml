@@ -1,0 +1,58 @@
+# Node pool 1: spot only, for interruption-tolerant work.
+
+
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: batch-spot
+spec:
+  weight: 50
+
+  template:
+    metadata:
+      labels:
+        workload: batch
+        capacity: spot
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+
+      taints:
+        - key: workload
+          value: batch
+          effect: NoSchedule
+
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"]
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64", "arm64"]
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: ["m", "c", "r"]
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: ["5"]
+        - key: karpenter.k8s.aws/instance-size
+          operator: NotIn
+          values: ["nano", "micro", "small"]
+
+      expireAfter: 720h
+
+  limits:
+    cpu: 48
+
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 30s
+    budgets:
+      - nodes: "20%"
+
+# Long-running jobs that must not be cut mid-run should carry the pod annotation
+#   karpenter.sh/do-not-disrupt: "true"
+# Note this only protects against Karpenter consolidation. It cannot stop a spot
+# interruption — after the 2-minute warning EC2 takes the node regardless.

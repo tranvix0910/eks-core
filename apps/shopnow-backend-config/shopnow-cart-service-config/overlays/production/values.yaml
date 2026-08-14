@@ -1,0 +1,34 @@
+# Production overlay.
+#
+# The ingress block that used to live here is gone: the ACM certificate belonged
+# to account 022499043310 and the domain *.tranvix.click is not ours, and the
+# three hardcoded subnet ids were from a different VPC. Listener ports now live
+# in the chart's values.yaml, one per service on the shared eks-workload ALB.
+configmap:
+  data:
+    application.properties: |
+      # Switches off the baked-in `localhost` profile, whose profile-activated
+      # document points eureka at http://discovery-server:8761 - a Service that
+      # does not exist here; it is shopnow-discovery-server-service. Naming a
+      # profile nothing activates on removes the competing value rather than
+      # relying on override precedence against a profile-specific document.
+      spring.profiles.active=production
+
+      spring.application.name=cart-service
+      server.port=5863
+
+      # Bare "cart-service" doesn't resolve - and note the real K8s Service is
+      # shopnow-shopping-cart-service-service, not shopnow-cart-service-service
+      # (the chart's appName is shopnow-shopping-cart-service, spring.application.name
+      # is the shorter cart-service - two different names for the same thing).
+      # See shopnow-product-service-config for why this was invisible until now.
+      eureka.instance.hostname=shopnow-shopping-cart-service-service
+      eureka.instance.instance-id=${spring.application.name}
+      eureka.client.service-url.defaultZone=http://shopnow-discovery-server-service:8761/eureka/
+
+      spring.datasource.url=jdbc:postgresql://postgres:5432/postgres?useSSL=false
+      spring.datasource.username=postgres
+      spring.datasource.password=admin
+      spring.jpa.hibernate.ddl-auto=update
+      spring.jpa.show-sql=true
+      spring.jpa.properties.hibernate.format-sql=true

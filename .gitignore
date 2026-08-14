@@ -1,0 +1,38 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.lock.hcl.bak
+
+# Never commit real variable values that may carry account IDs or secrets.
+# terraform.tfvars is committed on purpose here (no secrets, only CIDRs and names).
+# Anything ending in .auto.tfvars or .secret.tfvars stays out.
+*.auto.tfvars
+*.secret.tfvars
+
+# Kubernetes
+kubeconfig
+kubeconfig-*
+*.kubeconfig
+rancher-import*.yaml
+
+# Secrets - all secrets belong in AWS Secrets Manager, never here
+*.pem
+*.key
+.env
+.env.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

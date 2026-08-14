@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-discovery-server
+  namespace: argocd
+  annotations:
+    # Eureka before the services that register with it, same reasoning as the
+    # config server.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  destination:
+    namespace: shopnow
+    server: https://kubernetes.default.svc
+  source:
+    # This repository, not shopnow-backend - the chart directory lives here.
+    repoURL: https://github.com/tranvix0910/shopnow-backend-config.git
+    targetRevision: main
+    path: shopnow-discovery-server-chart
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../shopnow-discovery-server-config/overlays/production/values.yaml
+      values: |
+        image:
+          # Account 963626856932, not 022499043310 - see
+          # terraform/20-cluster-workload/modules/ecr.
+          repository: "963626856932.dkr.ecr.ap-southeast-1.amazonaws.com/shopnow/shopnow-discovery-server"
+  project: shopnow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

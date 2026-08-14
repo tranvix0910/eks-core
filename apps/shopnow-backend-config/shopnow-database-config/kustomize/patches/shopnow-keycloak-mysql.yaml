@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shopnow-keycloak-mysql-deployment
+  namespace: shopnow
+  labels:
+    app: shopnow-keycloak-mysql
+spec:
+  replicas: 1
+  # Recreate for the same reason as postgres: one ReadWriteOnce EBS volume cannot
+  # be attached by two pods, so a rolling update would deadlock.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: shopnow-keycloak-mysql
+  template:
+    metadata:
+      labels:
+        app: shopnow-keycloak-mysql
+    spec:
+      # On-demand only - this pod owns an EBS volume, see the postgres manifest.
+      nodeSelector:
+        workload: microservices
+        capacity: on-demand
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: microservices
+          effect: NoSchedule
+
+      # mysql runs as uid 999 and must own its data directory.
+      securityContext:
+        fsGroup: 999
+
+      containers:
+        - name: shopnow-keycloak-mysql
+          # 8.0, matching the pin in kustomization.yaml. The manifest said 5.7,
+          # which reached end of life in October 2023 and is not a combination
+          # Keycloak 23 is tested against.
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: "root"
+            - name: MYSQL_DATABASE
+              value: "keycloak"
+            - name: MYSQL_USER
+              value: "keycloak"
+            - name: MYSQL_PASSWORD
+              value: "password"
+          ports:
+            - containerPort: 3306
+              name: mysql
+
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+
+          # mysqladmin ping over the socket. A TCP probe passes during the
+          # initial database creation, while the server still refuses logins.
+          readinessProbe:
+            exec:
+              command:
+                ["mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                ["mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 3
+
+          volumeMounts:
+            - mountPath: /var/lib/mysql
+              name: mysql-data
+              subPath: mysql
+      volumes:
+        - name: mysql-data
+          persistentVolumeClaim:
+            claimName: mysql-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shopnow-keycloak-mysql-service
+  namespace: shopnow
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: mysql
+      port: 3306
+      protocol: TCP
+      targetPort: 3306
+  selector:
+    app: shopnow-keycloak-mysql
+  sessionAffinity: None
+  type: ClusterIP

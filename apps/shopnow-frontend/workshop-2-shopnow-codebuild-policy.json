@@ -1,0 +1,29 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowECRLogin",
+        "Effect": "Allow",
+        "Action": "ecr:GetAuthorizationToken",
+        "Resource": "*"
+      },
+      {
+        "Sid": "ECRPushImage",
+        "Effect": "Allow",
+        "Action": [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:CompleteLayerUpload",
+          "ecr:InitiateLayerUpload",
+          "ecr:PutImage",
+          "ecr:UploadLayerPart"
+        ],
+        "Resource": "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/shopnow/shopnow-frontend"
+      },
+      {
+        "Sid": "SecretsAccess",
+        "Effect": "Allow",
+        "Action": "secretsmanager:GetSecretValue",
+        "Resource": "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:workshop-2-shopnow*"
+      }
+    ]
+  }

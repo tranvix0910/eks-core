@@ -1,0 +1,22 @@
+{{- if .Values.persistence.enabled }}
+# EFS, not EBS. A gp3 volume attaches to one node at a time, so the second
+# replica of this Deployment would sit Pending on a Multi-Attach error. Anything
+# shared by more than one replica has to be ReadWriteMany, which on AWS means EFS.
+#
+# Good fit here: uploaded files, generated assets, shared scratch.
+# Bad fit: databases, SQLite, anything doing small random writes or frequent
+# fsync - that belongs on the gp3 StorageClass.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.global.appName }}-efs
+  namespace: {{ .Values.global.namespace }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: {{ .Values.persistence.storageClass }}
+  resources:
+    requests:
+      # EFS grows on demand; this number is not a quota and is not enforced.
+      storage: {{ .Values.persistence.size }}
+{{- end }}

@@ -1,0 +1,38 @@
+{{- if and .Values.global.enabledComponents.ingress .Values.global.enabledComponents.service }}
+# Joins the shared ALB rather than creating its own - same pattern as the
+# admin tools and the 5 backend services. See shopnow-config-server-chart's
+# ingress.yaml for the full reasoning: no host (routing is by listener port,
+# there is no domain this account owns), no certificate-arn/subnets (the
+# controller discovers subnets from the kubernetes.io/role/elb tags layer 10
+# already sets), HTTP only behind the inbound-cidrs allowlist below.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.global.appName }}-ingress
+  namespace: {{ .Values.global.namespace }}
+  annotations:
+    alb.ingress.kubernetes.io/group.name: {{ .Values.ingress.groupName | quote }}
+    alb.ingress.kubernetes.io/group.order: {{ .Values.ingress.groupOrder | quote }}
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: {{ .Values.ingress.listenPorts | quote }}
+    alb.ingress.kubernetes.io/inbound-cidrs: {{ .Values.ingress.inboundCidrs | quote }}
+    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.ingress.healthcheckPath | quote }}
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/success-codes: {{ .Values.ingress.successCodes | quote }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    # host is omitted when empty - an empty string would render `host: ""`,
+    # which the API server accepts and which then matches no request at all.
+    - {{ if .Values.ingress.host }}host: {{ .Values.ingress.host | quote }}
+      {{ end }}http:
+        paths:
+          - path: {{ .Values.ingress.path }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ .Values.global.appName }}-service
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

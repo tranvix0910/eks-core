@@ -3,32 +3,23 @@ kind: Application
 metadata:
   name: shopnow-product-service
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   destination:
     namespace: shopnow
     server: https://kubernetes.default.svc
   source:
-    # This repository, not shopnow-backend.
-    #
-    # The chart at path shopnow-product-service-chart lives HERE, in
-    # shopnow-backend-config. Pointing at shopnow-backend (the application source
-    # repo) makes Argo CD fail the sync with "app path does not exist" - the
-    # chart directory simply is not in that repo.
-    repoURL: https://github.com/tranvix0910/shopnow-backend-config.git
+    repoURL: https://github.com/tranvix0910/eks-core.git
     targetRevision: main
-    path: shopnow-product-service-chart
+    path: apps/shopnow-backend-config/shopnow-product-service-chart
     helm:
       valueFiles:
         - values.yaml
         - ../shopnow-product-service-config/overlays/production/values.yaml
       values: |
         image:
-          # Account 963626856932, not 022499043310. The original account is not
-          # this one; every repository was recreated by
-          # terraform/20-cluster-workload/modules/ecr. A pull from the old
-          # account fails with ImagePullBackOff and no useful message beyond
-          # "no basic auth credentials".
-          repository: "963626856932.dkr.ecr.ap-southeast-1.amazonaws.com/shopnow/shopnow-product-service"
+          repository: "963626856932.dkr.ecr.ap-northeast-1.amazonaws.com/shopnow/shopnow-product-service"
   project: shopnow
   syncPolicy:
     automated:

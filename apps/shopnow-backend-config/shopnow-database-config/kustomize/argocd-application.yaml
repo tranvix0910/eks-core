@@ -17,9 +17,9 @@ spec:
     # that repository does not exist. Argo CD reports "repository not found" and
     # the whole database layer never syncs, which then shows up as every
     # microservice failing to reach postgres:5432.
-    repoURL: https://github.com/tranvix0910/shopnow-backend-config.git
+    repoURL: https://github.com/tranvix0910/eks-core.git
     targetRevision: main
-    path: shopnow-database-config
+    path: apps/shopnow-backend-config/shopnow-database-config
   destination:
     server: https://kubernetes.default.svc
     namespace: shopnow

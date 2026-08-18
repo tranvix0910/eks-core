@@ -1,0 +1,258 @@
+# Consolidated ShopNow ArgoCD Applications Manifest
+# Deploys Database Services, Spring Cloud Backends, and Frontend Blue-Green Rollout
+
+---
+# 1. Database Layer (Postgres, MySQL, Keycloak) - Wave 0
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-database-services
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: shopnow
+  source:
+    repoURL: https://github.com/tranvix0910/eks-core.git
+    targetRevision: main
+    path: apps/shopnow-backend-config/shopnow-database-config
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: shopnow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10
+
+---
+# 2. Discovery Server (Netflix Eureka) - Wave 1
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-discovery-server
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: shopnow
+  source:
+    repoURL: https://github.com/tranvix0910/eks-core.git
+    targetRevision: main
+    path: apps/shopnow-backend-config/shopnow-discovery-server-chart
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../shopnow-discovery-server-config/overlays/production/values.yaml
+      values: |
+        image:
+          repository: "963626856932.dkr.ecr.ap-northeast-1.amazonaws.com/shopnow/shopnow-discovery-server"
+  destination:
+    namespace: shopnow
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+
+---
+# 3. Config Server (Spring Cloud Config) - Wave 1
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-config-server
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: shopnow
+  source:
+    repoURL: https://github.com/tranvix0910/eks-core.git
+    targetRevision: main
+    path: apps/shopnow-backend-config/shopnow-config-server-chart
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../shopnow-config-server-config/overlays/production/values.yaml
+      values: |
+        image:
+          repository: "963626856932.dkr.ecr.ap-northeast-1.amazonaws.com/shopnow/shopnow-config-server"
+  destination:
+    namespace: shopnow
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+
+---
+# 4. Product Service - Wave 2
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-product-service
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: shopnow
+  source:
+    repoURL: https://github.com/tranvix0910/eks-core.git
+    targetRevision: main
+    path: apps/shopnow-backend-config/shopnow-product-service-chart
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../shopnow-product-service-config/overlays/production/values.yaml
+      values: |
+        image:
+          repository: "963626856932.dkr.ecr.ap-northeast-1.amazonaws.com/shopnow/shopnow-product-service"
+  destination:
+    namespace: shopnow
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+
+---
+# 5. Cart Service - Wave 2
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-cart-service
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: shopnow
+  source:
+    repoURL: https://github.com/tranvix0910/eks-core.git
+    targetRevision: main
+    path: apps/shopnow-backend-config/shopnow-cart-service-chart
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../shopnow-cart-service-config/overlays/production/values.yaml
+      values: |
+        image:
+          repository: "963626856932.dkr.ecr.ap-northeast-1.amazonaws.com/shopnow/shopnow-shopping-cart-service"
+  destination:
+    namespace: shopnow
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+
+---
+# 6. User Service - Wave 2
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-user-service
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: shopnow
+  source:
+    repoURL: https://github.com/tranvix0910/eks-core.git
+    targetRevision: main
+    path: apps/shopnow-backend-config/shopnow-user-service-chart
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../shopnow-user-service-config/overlays/production/values.yaml
+      values: |
+        image:
+          repository: "963626856932.dkr.ecr.ap-northeast-1.amazonaws.com/shopnow/shopnow-user-service"
+  destination:
+    namespace: shopnow
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+
+---
+# 7. API Gateway (Spring Cloud Gateway) - Wave 2
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-api-gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: shopnow
+  source:
+    repoURL: https://github.com/tranvix0910/eks-core.git
+    targetRevision: main
+    path: apps/shopnow-backend-config/shopnow-api-gateway-chart
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../shopnow-api-gateway-config/overlays/production/values.yaml
+      values: |
+        image:
+          repository: "963626856932.dkr.ecr.ap-northeast-1.amazonaws.com/shopnow/shopnow-api-gateway"
+  destination:
+    namespace: shopnow
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+
+---
+# 8. Frontend (Argo Rollouts Blue-Green Deployment) - Wave 3
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopnow-frontend
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: shopnow
+  source:
+    repoURL: https://github.com/tranvix0910/eks-core.git
+    targetRevision: main
+    path: apps/shopnow-frontend-config/shopnow-frontend-chart
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../shopnow-frontend-config/overlays/production/values.yaml
+      values: |
+        image:
+          repository: "963626856932.dkr.ecr.ap-northeast-1.amazonaws.com/shopnow/shopnow-frontend"
+  destination:
+    namespace: shopnow
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

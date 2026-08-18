@@ -3,13 +3,15 @@ kind: Application
 metadata:
   name: shopnow-frontend
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   destination:
     namespace: shopnow
     server: https://kubernetes.default.svc
   source:
-    path: shopnow-frontend-chart
-    repoURL: https://github.com/tranvix0910/shopnow-frontend-config.git
+    path: apps/shopnow-frontend-config/shopnow-frontend-chart
+    repoURL: https://github.com/tranvix0910/eks-core.git
     targetRevision: main
     helm:
       valueFiles:
@@ -17,11 +19,11 @@ spec:
         - ../shopnow-frontend-config/overlays/production/values.yaml
       values: |
         image:
-          # Account 963626856932, not 022499043310 - see
-          # terraform/20-cluster-workload/modules/ecr.
-          repository: "963626856932.dkr.ecr.ap-southeast-1.amazonaws.com/shopnow/shopnow-frontend"
+          repository: "963626856932.dkr.ecr.ap-northeast-1.amazonaws.com/shopnow/shopnow-frontend"
   project: shopnow
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

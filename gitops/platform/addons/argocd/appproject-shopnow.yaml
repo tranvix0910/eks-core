@@ -21,8 +21,10 @@ spec:
   description: ShopNow microservices and their databases
 
   sourceRepos:
+    - https://github.com/tranvix0910/eks-core.git
     - https://github.com/tranvix0910/shopnow-backend-config.git
     - https://github.com/tranvix0910/shopnow-frontend-config.git
+    - '*'
 
   destinations:
     - server: https://kubernetes.default.svc

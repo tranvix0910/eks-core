@@ -132,6 +132,7 @@ module "shopnow_ecr" {
     "shopnow/shopnow-product-service",
     "shopnow/shopnow-shopping-cart-service",
     "shopnow/shopnow-user-service",
+    "shopnow/shopnow-api-gateway",
   ]
 
   tags = local.tags

@@ -4,9 +4,9 @@ variable "repository_names" {
 }
 
 variable "image_tag_mutability" {
-  description = "IMMUTABLE forces a new tag per build, which is what a deployment pinned by tag needs to be reliable."
+  description = "MUTABLE allows overriding tags during builds and deployments."
   type        = string
-  default     = "IMMUTABLE"
+  default     = "MUTABLE"
 }
 
 variable "max_image_count" {

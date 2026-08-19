@@ -1,16 +1,3 @@
-# Public ALB for Grafana - the one thing on cluster 2 a person actually needs
-# to open in a browser. Separate from internal-ingress.yaml on purpose: scheme
-# (internal vs internet-facing) is a property of the whole load balancer, not
-# of one listener, so Grafana cannot share the internal ALB that fronts
-# Mimir/Loki without making their write endpoints public too.
-#
-#   kubectl apply -f gitops/platform/observability/ingress/grafana-ingress.yaml
-#
-# 0.0.0.0/0 - same lab tradeoff as cluster 1's admin tools, see
-# gitops/platform/ingress/admin-ingress.yaml for the full reasoning. Grafana
-# does have its own login (admin / the auto-generated password in the
-# `grafana` secret), unlike Prometheus/Alertmanager on cluster 1 which have
-# none - narrower exposure than those already accepted.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

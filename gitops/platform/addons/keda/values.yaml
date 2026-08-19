@@ -1,0 +1,16 @@
+nodeSelector:
+  role: infra
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+    effect: NoSchedule
+
+resources:
+  operator:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+  metricServer:
+    requests:
+      cpu: 50m
+      memory: 100Mi

@@ -103,24 +103,6 @@ prometheus:
         headers:
           X-Scope-OrgID: eks-workload
         tlsConfig:
-          # Secret is a manual copy of cert-manager's observability-alb-tls
-          # (namespace cert-manager) into this namespace - cert-manager only
-          # manages Secrets in the namespace a Certificate resource lives in,
-          # and that Certificate lives on this same cluster (cert-manager is
-          # only installed here, not on cluster 2) but in a different
-          # namespace. This copy does NOT auto-update when cert-manager
-          # renews the original before its 1-year expiry - re-copy manually
-          # (or automate) before then, or remote_write starts failing TLS
-          # verification against a stale ca.crt.
-          #
-          # caFile, not ca_file - this is the Prometheus Operator CRD
-          # (monitoring.coreos.com/v1 Prometheus.spec.remoteWrite[].tlsConfig),
-          # camelCase like every other field in the CRD, not the raw
-          # Prometheus YAML config's snake_case tls_config/ca_file. The first
-          # `helm upgrade` with the snake_case names failed server-side apply
-          # outright ("field not declared in schema") rather than silently
-          # doing nothing - confirmed the real field name with `kubectl
-          # explain prometheus.spec.remoteWrite.tlsConfig` before retrying.
           caFile: /etc/prometheus/secrets/observability-alb-tls/ca.crt
         queueConfig:
           capacity: 10000

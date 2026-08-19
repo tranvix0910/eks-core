@@ -57,7 +57,13 @@ datasources:
 # Mimir as-is; and Loki's own {cluster=...} label). revision pinned to each
 # dashboard's current value from the grafana.com API at the time this was
 # written, not left floating - an unpinned revision can change shape under
-# us on a future `helm upgrade` with no code change on our side to explain it.
+extraConfigmapMounts:
+  - name: enterprise-workload-dashboard
+    mountPath: /var/lib/grafana/dashboards/default/enterprise-workload-360.json
+    subPath: enterprise-workload-360.json
+    configMap: enterprise-workload-dashboard
+    readOnly: true
+
 dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1
@@ -95,3 +101,21 @@ dashboards:
       gnetId: 13639
       revision: 2
       datasource: Loki
+    keda-autoscaler:
+      # https://grafana.com/grafana/dashboards/14513 - Official KEDA Operator,
+      # ScaledObjects, ScaledJobs, and HPA trigger monitoring.
+      gnetId: 14513
+      revision: 2
+      datasource: Mimir
+    kubernetes-views-pods:
+      # https://grafana.com/grafana/dashboards/15757 - Deep-dive per-Pod CPU,
+      # memory throttling, network I/O, and container lifecycle.
+      gnetId: 15757
+      revision: 39
+      datasource: Mimir
+    spring-boot-statistics:
+      # https://grafana.com/grafana/dashboards/4701 - JVM, HikariCP, HTTP
+      # request counts, and response latency percentiles for Spring microservices.
+      gnetId: 4701
+      revision: 10
+      datasource: Mimir

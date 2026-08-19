@@ -54,10 +54,13 @@ docs/
 │   ├── 03-secrets-management-and-rotation.md          # KMS Envelope Encryption, External Secrets Operator (ESO)
 │   └── 04-tls-certificate-lifecycle.md                # cert-manager lifecycle, ACM Private CA vs Manual Re-import
 │
-└── 06-operations/                                     # OPERATIONS, TROUBLESHOOTING & RUNBOOKS
-    ├── 01-tokyo-region-migration-runbook.md           # Tokyo region migration runbook (ap-northeast-1), 20-21 loop
-    ├── 02-master-incident-catalogue.md                # Comprehensive catalogue of 32 real-world incidents
-    └── 03-system-verification-and-diagnostics.md      # CLI diagnostics, remote_write testing, log queries, rollouts
+├── 06-operations/                                     # OPERATIONS, TROUBLESHOOTING & RUNBOOKS
+│   ├── 01-tokyo-region-migration-runbook.md           # Tokyo region migration runbook (ap-northeast-1), 20-21 loop
+│   ├── 02-master-incident-catalogue.md                # Comprehensive catalogue of 32 real-world incidents
+│   ├── 03-system-verification-and-diagnostics.md      # CLI diagnostics, remote_write testing, log queries, rollouts
+│   └── 04-workload-autoscaling-implementation-and-testing.md # HPA/CPA/KEDA step-by-step deploy + load-test runbook
+│
+└── 07-workload-autoscaling-hpa-cpa-keda.md            # HPA/CPA/KEDA deep-dive: mechanism, gaps, adoption path
 ```
 
 ---

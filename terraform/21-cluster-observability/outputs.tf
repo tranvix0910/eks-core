@@ -36,17 +36,10 @@ output "loki_bucket_name" {
   value = aws_s3_bucket.loki.bucket
 }
 
-# BOOTSTRAP TEMP COMMENT (Tokyo rebuild): reference resources in tls.tf/dns.tf
-# that are commented out until after GitOps deploy. Re-enable alongside those.
-# output "observability_alb_certificate_arn" {
-#   description = "Attach via alb.ingress.kubernetes.io/certificate-arn on the Mimir/Loki Ingress"
-#   value       = aws_acm_certificate.observability_alb.arn
-# }
-#
-# output "mimir_url" {
-#   value = "https://${aws_route53_record.mimir.name}:9009"
-# }
-#
-# output "loki_url" {
-#   value = "https://${aws_route53_record.loki.name}:3100"
-# }
+output "mimir_url" {
+  value = "https://${aws_route53_record.mimir.name}:9009"
+}
+
+output "loki_url" {
+  value = "https://${aws_route53_record.loki.name}:3100"
+}

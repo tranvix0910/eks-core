@@ -9,8 +9,8 @@ spec:
   dnsNames:
     - mimir.observability.internal
     - loki.observability.internal
-  duration: 8760h      # 1 năm
-  renewBefore: 720h    # tự renew Secret trước 30 ngày
+  duration: 8760h
+  renewBefore: 720h
   issuerRef:
     name: observability-ca-issuer
     kind: ClusterIssuer

@@ -62,9 +62,9 @@ metadata:
     alb.ingress.kubernetes.io/scheme: internal
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 3100}]'
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:963626856932:certificate/721783f0-f7cf-40cd-a65d-fa78c01fdbbd
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-1:963626856932:certificate/c44dffe6-044c-435e-8f44-2f01b7943cd9
     alb.ingress.kubernetes.io/security-groups: eks-observability-internal-alb
-    alb.ingress.kubernetes.io/healthcheck-path: /ready
+    alb.ingress.kubernetes.io/healthcheck-path: /
     alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
 spec:
   ingressClassName: alb

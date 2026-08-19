@@ -1,0 +1,164 @@
+# ==============================================================================
+# KEDA ScaledObjects for ShopNow Microservices
+# Kết hợp 2 cơ chế tối ưu chi phí & hiệu năng:
+#   1. CRON SCALER (Lịch làm việc): Tự động Scale về 0 Pods ban đêm/cuối tuần
+#      -> Karpenter tự động TẮT TOÀN BỘ máy ảo EC2 để tiết kiệm chi phí AWS.
+#   2. PROMETHEUS SCALER (Tự co giãn theo tải): Trong giờ làm việc, tự động
+#      bung Pods khi có traffic/load test.
+# ==============================================================================
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: shopnow-api-gateway-scaler
+  namespace: shopnow
+  labels:
+    app.kubernetes.io/part-of: shopnow
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: shopnow-api-gateway-deployment
+  pollingInterval: 15
+  cooldownPeriod: 60
+  minReplicaCount: 0
+  maxReplicaCount: 5
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 60
+          policies:
+            - type: Percent
+              value: 50
+              periodSeconds: 15
+  triggers:
+    - type: cron
+      metadata:
+        timezone: Asia/Ho_Chi_Minh
+        start: 0 9 * * 1-5
+        end: 0 19 * * 1-5
+        desiredReplicas: "1"
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+        metricName: shopnow_api_gateway_workload_rate
+        query: sum(rate(container_cpu_usage_seconds_total{namespace="shopnow", pod=~"shopnow-api-gateway.*", container!="POD", container!=""}[1m]))
+        threshold: "0.03"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: shopnow-product-service-scaler
+  namespace: shopnow
+  labels:
+    app.kubernetes.io/part-of: shopnow
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: shopnow-product-service-deployment
+  pollingInterval: 15
+  cooldownPeriod: 60
+  minReplicaCount: 0
+  maxReplicaCount: 6
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 60
+          policies:
+            - type: Percent
+              value: 50
+              periodSeconds: 15
+  triggers:
+    - type: cron
+      metadata:
+        timezone: Asia/Ho_Chi_Minh
+        start: 0 9 * * 1-5
+        end: 0 19 * * 1-5
+        desiredReplicas: "2"
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+        metricName: shopnow_product_service_workload_rate
+        query: sum(rate(container_cpu_usage_seconds_total{namespace="shopnow", pod=~"shopnow-product-service.*", container!="POD", container!=""}[1m]))
+        threshold: "0.03"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: shopnow-cart-service-scaler
+  namespace: shopnow
+  labels:
+    app.kubernetes.io/part-of: shopnow
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: shopnow-shopping-cart-service-deployment
+  pollingInterval: 15
+  cooldownPeriod: 60
+  minReplicaCount: 0
+  maxReplicaCount: 6
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 60
+          policies:
+            - type: Percent
+              value: 50
+              periodSeconds: 15
+  triggers:
+    - type: cron
+      metadata:
+        timezone: Asia/Ho_Chi_Minh
+        start: 0 9 * * 1-5
+        end: 0 19 * * 1-5
+        desiredReplicas: "2"
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+        metricName: shopnow_cart_service_workload_rate
+        query: sum(rate(container_cpu_usage_seconds_total{namespace="shopnow", pod=~"shopnow-shopping-cart-service.*", container!="POD", container!=""}[1m]))
+        threshold: "0.03"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: shopnow-user-service-scaler
+  namespace: shopnow
+  labels:
+    app.kubernetes.io/part-of: shopnow
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: shopnow-user-service-deployment
+  pollingInterval: 15
+  cooldownPeriod: 60
+  minReplicaCount: 0
+  maxReplicaCount: 6
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 60
+          policies:
+            - type: Percent
+              value: 50
+              periodSeconds: 15
+  triggers:
+    - type: cron
+      metadata:
+        timezone: Asia/Ho_Chi_Minh
+        start: 0 9 * * 1-5
+        end: 0 19 * * 1-5
+        desiredReplicas: "2"  
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+        metricName: shopnow_user_service_workload_rate
+        query: sum(rate(container_cpu_usage_seconds_total{namespace="shopnow", pod=~"shopnow-user-service.*", container!="POD", container!=""}[1m]))
+        threshold: "0.03"

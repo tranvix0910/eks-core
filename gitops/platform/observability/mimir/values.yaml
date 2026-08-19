@@ -79,6 +79,11 @@ mimir:
     ruler_storage:
       storage_prefix: ruler
 
+    limits:
+      ingestion_rate: 100000
+      ingestion_burst_size: 500000
+      max_global_series_per_user: 500000
+
     # A single ingester: key - YAML silently lets a later top-level key of
     # the same name overwrite an earlier one rather than erroring, and that
     # cost a rebuild here once already (push_grpc_method_enabled and ring
@@ -110,6 +115,8 @@ mimir:
 # is set to 1 - meaning 3 pods, not 1, until this is turned off explicitly.
 ingester:
   replicas: 1
+  persistentVolume:
+    size: 10Gi
   zoneAwareReplication:
     enabled: false
   nodeSelector:
@@ -117,6 +124,8 @@ ingester:
 
 store_gateway:
   replicas: 1
+  persistentVolume:
+    size: 10Gi
   zoneAwareReplication:
     enabled: false
   nodeSelector:
